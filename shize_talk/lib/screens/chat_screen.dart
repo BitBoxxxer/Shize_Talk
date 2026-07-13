@@ -91,7 +91,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+
     await Supabase.instance.client.from('messages').insert({
+      'sender_id': userId,
       'sender_name': _displayName.isEmpty ? 'Без имени' : _displayName,
       'content': text,
     });
