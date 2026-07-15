@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/invite_screen.dart';
 import 'screens/chat_screen.dart';
 
+// ЗАМЕНИТЬ на свои значения из Supabase → Project Settings → API
 const supabaseUrl = 'https://zethqqyaddlztgdojiwe.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpldGhxcXlhZGRsenRnZG9qaXdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM4ODU4MzcsImV4cCI6MjA5OTQ2MTgzN30.V0wIfbpfUmzvT9p2z-0-iEqY3pU13r83dou5kRGTtH4';
 
