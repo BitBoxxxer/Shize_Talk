@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
@@ -7,7 +8,7 @@ class Message {
   final String senderId;
   final String senderName;
   final String content;
-  final DateTime createdAt;
+  final DateTime createdAt; // всегда хранится в local time (см. fromMap)
 
   Message({
     required this.id,
@@ -23,7 +24,9 @@ class Message {
       senderId: map['sender_id'] as String? ?? '',
       senderName: map['sender_name'] as String,
       content: map['content'] as String,
-      createdAt: DateTime.parse(map['created_at'] as String),
+      // Supabase отдаёт timestamptz в UTC — .toLocal() переводит его в
+      // часовой пояс, установленный на устройстве пользователя.
+      createdAt: DateTime.parse(map['created_at'] as String).toLocal(),
     );
   }
 }
@@ -31,8 +34,16 @@ class Message {
 class ChatScreen extends StatefulWidget {
   final String chatId;
   final String chatTitle;
+  // Нужен, чтобы показывать "в сети"/"был(а) в сети" собеседника.
+  // Для групповых чатов (пока не реализованы) можно не передавать.
+  final String? otherUserId;
 
-  const ChatScreen({super.key, required this.chatId, required this.chatTitle});
+  const ChatScreen({
+    super.key,
+    required this.chatId,
+    required this.chatTitle,
+    this.otherUserId,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -42,9 +53,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   List<Message> _messages = [];
-  RealtimeChannel? _channel;
+  RealtimeChannel? _messagesChannel;
+  RealtimeChannel? _readsChannel;
   String _displayName = '';
   String? _myUserId;
+
+  DateTime? _otherLastReadAt;
+  DateTime? _otherLastSeenAt;
+  Timer? _presenceTimer;
 
   @override
   void initState() {
@@ -53,6 +69,76 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadProfile();
     _loadMessages();
     _subscribeToMessages();
+    _loadReadStatus();
+    _subscribeToReadStatus();
+    _loadOtherPresence();
+
+    _touchPresence();
+    _presenceTimer = Timer.periodic(const Duration(seconds: 25), (_) => _touchPresence());
+  }
+
+  Future<void> _touchPresence() async {
+    try {
+      await Supabase.instance.client.rpc('touch_presence');
+    } catch (_) {
+      // тихо игнорируем — присутствие не критично для основной функциональности
+    }
+  }
+
+  Future<void> _loadOtherPresence() async {
+    if (widget.otherUserId == null) return;
+    try {
+      final result = await Supabase.instance.client
+          .rpc('get_user_presence', params: {'p_user_id': widget.otherUserId});
+      if (!mounted || result == null) return;
+      setState(() => _otherLastSeenAt = DateTime.parse(result as String).toLocal());
+    } catch (_) {}
+  }
+
+  Future<void> _loadReadStatus() async {
+    try {
+      final data = await Supabase.instance.client
+          .rpc('get_chat_participants_read', params: {'p_chat_id': widget.chatId});
+      final rows = List<Map<String, dynamic>>.from(data as List);
+      final otherRow = rows.firstWhere(
+        (r) => r['user_id'] != _myUserId,
+        orElse: () => {},
+      );
+      if (!mounted || otherRow.isEmpty || otherRow['last_read_at'] == null) return;
+      setState(() => _otherLastReadAt = DateTime.parse(otherRow['last_read_at'] as String).toLocal());
+    } catch (_) {}
+    // отмечаем чат прочитанным с моей стороны
+    _markRead();
+  }
+
+  Future<void> _markRead() async {
+    try {
+      await Supabase.instance.client.rpc('mark_chat_read', params: {'p_chat_id': widget.chatId});
+    } catch (_) {}
+  }
+
+  void _subscribeToReadStatus() {
+    _readsChannel = Supabase.instance.client
+        .channel('chat_reads:${widget.chatId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'chat_participants',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'chat_id',
+            value: widget.chatId,
+          ),
+          callback: (payload) {
+            if (!mounted) return;
+            final row = payload.newRecord;
+            if (row['user_id'] == _myUserId) return; // это моя же отметка
+            final raw = row['last_read_at'] as String?;
+            if (raw == null) return;
+            setState(() => _otherLastReadAt = DateTime.parse(raw).toLocal());
+          },
+        )
+        .subscribe();
   }
 
   Future<void> _loadProfile() async {
@@ -85,7 +171,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _subscribeToMessages() {
-    _channel = Supabase.instance.client
+    _messagesChannel = Supabase.instance.client
         .channel('chat:${widget.chatId}')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -105,6 +191,10 @@ class _ChatScreenState extends State<ChatScreen> {
               }
             });
             _scrollToBottom();
+            // Новое сообщение пришло, пока чат открыт — сразу отмечаем прочитанным
+            if (newMessage.senderId != _myUserId) {
+              _markRead();
+            }
           },
         )
         .subscribe();
@@ -147,8 +237,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
       final message = Message.fromMap(inserted);
       setState(() {
-        // На случай, если Realtime тоже пришлёт это же сообщение отдельно —
-        // не показываем его дважды.
         if (!_messages.any((m) => m.id == message.id)) {
           _messages.add(message);
         }
@@ -170,9 +258,35 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  String _formatTime(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  String? _presenceSubtitle() {
+    if (widget.otherUserId == null) return null;
+    final lastSeen = _otherLastSeenAt;
+    if (lastSeen == null) return null;
+
+    final diff = DateTime.now().difference(lastSeen);
+    if (diff.inSeconds < 45) return 'в сети';
+
+    final now = DateTime.now();
+    final isToday = lastSeen.year == now.year && lastSeen.month == now.month && lastSeen.day == now.day;
+    if (isToday) {
+      return 'был(а) в сети в ${_formatTime(lastSeen)}';
+    }
+    return 'был(а) в сети ${lastSeen.day.toString().padLeft(2, '0')}.${lastSeen.month.toString().padLeft(2, '0')} в ${_formatTime(lastSeen)}';
+  }
+
+  bool _isReadByOther(Message msg) {
+    if (_otherLastReadAt == null) return false;
+    return !_otherLastReadAt!.isBefore(msg.createdAt);
+  }
+
   @override
   void dispose() {
-    _channel?.unsubscribe();
+    _messagesChannel?.unsubscribe();
+    _readsChannel?.unsubscribe();
+    _presenceTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -180,8 +294,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final subtitle = _presenceSubtitle();
     return Scaffold(
-      appBar: AppBar(title: Text(widget.chatTitle)),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.chatTitle),
+            if (subtitle != null)
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.normal,
+                  color: subtitle == 'в сети' ? AppColors.success : AppColors.textSecondary,
+                ),
+              ),
+          ],
+        ),
+      ),
       body: RetroBackground(
         child: Column(
           children: [
@@ -193,6 +325,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 itemBuilder: (context, index) {
                   final msg = _messages[index];
                   final isMine = msg.senderId == _myUserId;
+                  final isRead = isMine && _isReadByOther(msg);
                   return Align(
                     alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
                     child: Container(
@@ -228,14 +361,29 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           Text(msg.content, style: const TextStyle(color: AppColors.textPrimary)),
                           const SizedBox(height: 4),
-                          Text(
-                            '${msg.createdAt.hour.toString().padLeft(2, '0')}:${msg.createdAt.minute.toString().padLeft(2, '0')}',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: isMine
-                                  ? Colors.white.withOpacity(0.75)
-                                  : AppColors.textSecondary,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _formatTime(msg.createdAt),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: isMine
+                                      ? Colors.white.withOpacity(0.75)
+                                      : AppColors.textSecondary,
+                                ),
+                              ),
+                              if (isMine) ...[
+                                const SizedBox(width: 4),
+                                Icon(
+                                  isRead ? Icons.done_all : Icons.done,
+                                  size: 14,
+                                  color: isRead
+                                      ? AppColors.cyan
+                                      : Colors.white.withOpacity(0.75),
+                                ),
+                              ],
+                            ],
                           ),
                         ],
                       ),

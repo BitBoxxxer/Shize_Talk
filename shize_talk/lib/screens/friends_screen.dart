@@ -89,7 +89,11 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
       if (!mounted) return;
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => ChatScreen(chatId: chatId, chatTitle: title ?? 'Чат'),
+          builder: (_) => ChatScreen(
+            chatId: chatId,
+            chatTitle: title ?? 'Чат',
+            otherUserId: friendId,
+          ),
         ),
       );
     } on PostgrestException catch (e) {

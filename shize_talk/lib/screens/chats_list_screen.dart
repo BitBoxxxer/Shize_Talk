@@ -87,19 +87,44 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                             (c['other_display_name'] as String?) ??
                             (c['other_username'] != null ? '@${c['other_username']}' : 'Чат');
                         final preview = c['last_message'] as String?;
+                        final lastSeenRaw = c['other_last_seen_at'] as String?;
+                        final isOnline = lastSeenRaw != null &&
+                            DateTime.now()
+                                    .difference(DateTime.parse(lastSeenRaw).toLocal())
+                                    .inSeconds <
+                                45;
 
                         return Card(
                           color: AppColors.surface,
                           margin: const EdgeInsets.only(bottom: 10),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: AppColors.blue.withOpacity(0.3),
-                              child: Text(
-                                title.isNotEmpty ? title[0].toUpperCase() : '?',
-                                style: const TextStyle(
-                                    color: AppColors.textPrimary, fontWeight: FontWeight.bold),
-                              ),
+                            leading: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                CircleAvatar(
+                                  backgroundColor: AppColors.blue.withOpacity(0.3),
+                                  child: Text(
+                                    title.isNotEmpty ? title[0].toUpperCase() : '?',
+                                    style: const TextStyle(
+                                        color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                if (isOnline)
+                                  Positioned(
+                                    right: -1,
+                                    bottom: -1,
+                                    child: Container(
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
+                                        color: AppColors.success,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: AppColors.surface, width: 2),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                             title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
                             subtitle: Text(
@@ -115,6 +140,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                       builder: (_) => ChatScreen(
                                         chatId: c['chat_id'] as String,
                                         chatTitle: title,
+                                        otherUserId: c['other_user_id'] as String?,
                                       ),
                                     ),
                                   )
