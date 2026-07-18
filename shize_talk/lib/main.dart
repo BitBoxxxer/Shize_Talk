@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'screens/invite_screen.dart';
-import 'screens/chat_screen.dart';
+import 'theme/app_theme.dart';
+import 'screens/welcome_screen.dart';
+import 'screens/chats_list_screen.dart';
+import 'screens/username_setup_screen.dart';
 
 // ЗАМЕНИТЬ на свои значения из Supabase → Project Settings → API
 const supabaseUrl = 'https://zethqqyaddlztgdojiwe.supabase.co';
@@ -22,8 +24,8 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Messenger',
-      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+      title: 'Shize Talk',
+      theme: AppTheme.theme,
       routes: {
         '/': (_) => const RootGate(),
       },
@@ -32,17 +34,56 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Проверяет: есть ли активная сессия. Если да — сразу в чат,
-// если нет — экран ввода инвайт-токена.
-class RootGate extends StatelessWidget {
+// Проверяет: есть ли активная сессия. Если да — но юзернейм ещё не задан,
+// сперва просим его придумать; если задан — сразу в список чатов.
+// Если сессии нет — экран выбора "Войти" / "У меня есть приглашение".
+class RootGate extends StatefulWidget {
   const RootGate({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  State<RootGate> createState() => _RootGateState();
+}
+
+class _RootGateState extends State<RootGate> {
+  late final Future<Widget> _destination = _resolveDestination();
+
+  Future<Widget> _resolveDestination() async {
     final session = Supabase.instance.client.auth.currentSession;
-    if (session != null) {
-      return const ChatScreen();
+    if (session == null) return const WelcomeScreen();
+
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return const WelcomeScreen();
+
+    try {
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('username')
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (profile != null && profile['username'] != null) {
+        return const ChatsListScreen();
+      }
+      return const UsernameSetupScreen();
+    } catch (_) {
+      // Сессия есть, но профиль не подтянулся (например, нет сети) —
+      // всё равно ведём в список чатов, экран сам покажет ошибку загрузки.
+      return const ChatsListScreen();
     }
-    return const InviteScreen();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _destination,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator(color: AppColors.cyan)),
+          );
+        }
+        return snapshot.data ?? const WelcomeScreen();
+      },
+    );
   }
 }
