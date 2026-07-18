@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
+import 'avatar_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -16,6 +17,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _usernamePattern = RegExp(r'^[a-zA-Z0-9_]{3,20}$');
 
   DateTime? _birthDate;
+  String? _avatarUrl;
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -36,6 +38,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _usernameController.text = (row['username'] as String?) ?? '';
         _displayNameController.text = (row['display_name'] as String?) ?? '';
         _bioController.text = (row['bio'] as String?) ?? '';
+        _avatarUrl = row['avatar_url'] as String?;
         final rawBirth = row['birth_date'] as String?;
         if (rawBirth != null) {
           _birthDate = DateTime.tryParse(rawBirth);
@@ -189,22 +192,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Center(
-                      child: CircleAvatar(
-                        radius: 44,
-                        backgroundColor: AppColors.purple.withOpacity(0.3),
-                        child: Text(
-                          _displayNameController.text.isNotEmpty
-                              ? _displayNameController.text[0].toUpperCase()
-                              : '?',
-                          style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                      child: GestureDetector(
+                        onTap: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const AvatarScreen()),
+                          );
+                          _loadProfile();
+                        },
+                        child: Stack(
+                          alignment: Alignment.bottomRight,
+                          children: [
+                            CircleAvatar(
+                              radius: 44,
+                              backgroundColor: AppColors.purple.withValues(alpha: 0.3),
+                              backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null,
+                              child: _avatarUrl == null
+                                  ? Text(
+                                      _displayNameController.text.isNotEmpty
+                                          ? _displayNameController.text[0].toUpperCase()
+                                          : '?',
+                                      style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                                    )
+                                  : null,
+                            ),
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: const BoxDecoration(
+                                gradient: AppColors.primaryGradient,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Center(
-                      child: Text(
-                        'Аватарка (фото/видео/гиф) — скоро',
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    Center(
+                      child: TextButton(
+                        onPressed: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const AvatarScreen()),
+                          );
+                          _loadProfile();
+                        },
+                        child: const Text('Изменить аватарку'),
                       ),
                     ),
                     const SizedBox(height: 32),

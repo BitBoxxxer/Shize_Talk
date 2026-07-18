@@ -369,7 +369,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: TextStyle(
                                   fontSize: 10,
                                   color: isMine
-                                      ? Colors.white.withOpacity(0.75)
+                                      ? Colors.white.withValues(alpha: 0.75)
                                       : AppColors.textSecondary,
                                 ),
                               ),
@@ -380,7 +380,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   size: 14,
                                   color: isRead
                                       ? AppColors.cyan
-                                      : Colors.white.withOpacity(0.75),
+                                      : Colors.white.withValues(alpha: 0.75),
                                 ),
                               ],
                             ],

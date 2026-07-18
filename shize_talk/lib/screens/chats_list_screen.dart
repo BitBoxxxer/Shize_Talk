@@ -103,12 +103,17 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                               clipBehavior: Clip.none,
                               children: [
                                 CircleAvatar(
-                                  backgroundColor: AppColors.blue.withOpacity(0.3),
-                                  child: Text(
-                                    title.isNotEmpty ? title[0].toUpperCase() : '?',
-                                    style: const TextStyle(
-                                        color: AppColors.textPrimary, fontWeight: FontWeight.bold),
-                                  ),
+                                  backgroundColor: AppColors.blue.withValues(alpha: 0.3),
+                                  backgroundImage: (c['other_avatar_url'] as String?) != null
+                                      ? NetworkImage(c['other_avatar_url'] as String)
+                                      : null,
+                                  child: (c['other_avatar_url'] as String?) == null
+                                      ? Text(
+                                          title.isNotEmpty ? title[0].toUpperCase() : '?',
+                                          style: const TextStyle(
+                                              color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                                        )
+                                      : null,
                                 ),
                                 if (isOnline)
                                   Positioned(

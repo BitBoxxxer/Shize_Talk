@@ -11,6 +11,12 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   supabase_flutter: ^2.16.0
+  image_picker: ^1.1.2
+  image: ^4.2.0
+  video_player: ^2.9.2       # превью видео при выборе участка для гифки
+  video_thumbnail: ^0.5.3    # кадр видео для отображения в кроппере
+  path_provider: ^2.1.4      # временные файлы при экспорте видео→гифка
+  ffmpeg_kit_flutter_new: ^4.1.0
 
 dev_dependencies:
   flutter_test:

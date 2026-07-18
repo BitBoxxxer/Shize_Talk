@@ -167,6 +167,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                 return _UserTile(
                   title: '@${u['username']}',
                   subtitle: u['display_name'] as String? ?? '',
+                  avatarUrl: u['avatar_url'] as String?,
                   trailing: TextButton(
                     onPressed: () => _sendRequest(u['username'] as String),
                     child: const Text('Добавить'),
@@ -194,6 +195,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
         return _UserTile(
           title: '@${r['requester_username']}',
           subtitle: r['requester_display_name'] as String? ?? '',
+          avatarUrl: r['requester_avatar_url'] as String?,
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -230,6 +232,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
         return _UserTile(
           title: title,
           subtitle: '@${f['username']}',
+          avatarUrl: f['avatar_url'] as String?,
           onTap: () => _openChatWith(f['friend_id'] as String, title),
           trailing: const Icon(Icons.chat_bubble_outline, color: AppColors.cyan),
         );
@@ -241,10 +244,17 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
 class _UserTile extends StatelessWidget {
   final String title;
   final String subtitle;
+  final String? avatarUrl;
   final Widget? trailing;
   final VoidCallback? onTap;
 
-  const _UserTile({required this.title, required this.subtitle, this.trailing, this.onTap});
+  const _UserTile({
+    required this.title,
+    required this.subtitle,
+    this.avatarUrl,
+    this.trailing,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -255,11 +265,14 @@ class _UserTile extends StatelessWidget {
       child: ListTile(
         onTap: onTap,
         leading: CircleAvatar(
-          backgroundColor: AppColors.purple.withOpacity(0.3),
-          child: Text(
-            title.isNotEmpty ? title[0].toUpperCase() : '?',
-            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
-          ),
+          backgroundColor: AppColors.purple.withValues(alpha: 0.3),
+          backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+          child: avatarUrl == null
+              ? Text(
+                  title.isNotEmpty ? title[0].toUpperCase() : '?',
+                  style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                )
+              : null,
         ),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: subtitle.isNotEmpty

@@ -134,13 +134,13 @@ class _GlowPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final glow1 = Paint()
       ..shader = RadialGradient(
-        colors: [AppColors.purple.withOpacity(0.22), Colors.transparent],
+        colors: [AppColors.purple.withValues(alpha: 0.22), Colors.transparent],
       ).createShader(Rect.fromCircle(center: Offset(size.width * 0.15, size.height * 0.05), radius: 260));
     canvas.drawRect(Offset.zero & size, glow1);
 
     final glow2 = Paint()
       ..shader = RadialGradient(
-        colors: [AppColors.cyan.withOpacity(0.16), Colors.transparent],
+        colors: [AppColors.cyan.withValues(alpha: 0.16), Colors.transparent],
       ).createShader(Rect.fromCircle(center: Offset(size.width * 0.9, size.height * 0.85), radius: 260));
     canvas.drawRect(Offset.zero & size, glow2);
   }
