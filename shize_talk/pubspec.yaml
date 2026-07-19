@@ -1,7 +1,7 @@
 name: shize_talk
 description: "Kasey's Messanger from 26 year"
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 0.3.0
+version: 0.3.0beta
 
 environment:
   sdk: ^3.12.2

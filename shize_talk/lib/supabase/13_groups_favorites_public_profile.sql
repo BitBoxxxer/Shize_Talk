@@ -4,6 +4,11 @@
 -- Выполнить один раз в Supabase → SQL Editor, после 05..12.
 -- ============================================================================
 
+-- 0. На случай, если миграция 11 (thumb_url) применилась не полностью —
+-- колонка нужна ниже в list_chat_participants / get_public_profile.
+alter table public.profiles
+  add column if not exists thumb_url text;
+
 -- 1. Разрешаем тип чата 'favorites' -------------------------------------------
 alter table public.chats drop constraint if exists chats_type_check;
 alter table public.chats

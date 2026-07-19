@@ -63,7 +63,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => ChatScreen(chatId: chatId, chatTitle: title),
+          builder: (_) => ChatScreen(chatId: chatId, chatTitle: title, isGroup: true),
         ),
       );
     } on PostgrestException catch (e) {

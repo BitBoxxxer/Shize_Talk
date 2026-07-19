@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/chat_attachment_compress.dart';
 import '../theme/app_theme.dart';
 import 'public_profile_screen.dart';
+import 'group_info_screen.dart';
 
 class Message {
   final String id;
@@ -23,6 +24,11 @@ class Message {
   final int? attachmentWidth;
   final int? attachmentHeight;
 
+  // Ответ на другое сообщение — храним только id, сам текст оригинала
+  // ищем в уже загруженном списке _messages (см. ChatScreen._findMessageById).
+  final String? replyToId;
+  final bool isPinned;
+
   bool get hasAttachment => attachmentPath != null;
   bool get isImageAttachment => attachmentType == 'image';
 
@@ -38,6 +44,8 @@ class Message {
     this.attachmentSizeBytes,
     this.attachmentWidth,
     this.attachmentHeight,
+    this.replyToId,
+    this.isPinned = false,
   });
 
   factory Message.fromMap(Map<String, dynamic> map) {
@@ -55,6 +63,8 @@ class Message {
       attachmentSizeBytes: map['attachment_size_bytes'] as int?,
       attachmentWidth: map['attachment_width'] as int?,
       attachmentHeight: map['attachment_height'] as int?,
+      replyToId: map['reply_to_id'] as String?,
+      isPinned: map['is_pinned'] as bool? ?? false,
     );
   }
 }
@@ -62,15 +72,18 @@ class Message {
 class ChatScreen extends StatefulWidget {
   final String chatId;
   final String chatTitle;
-  // Нужен, чтобы показывать "в сети"/"был(а) в сети" собеседника.
-  // Для групповых чатов (пока не реализованы) можно не передавать.
+  // Нужен, чтобы показывать "в сети"/"был(а) в сети" собеседника — только
+  // для личных чатов.
   final String? otherUserId;
+  // Групповой чат — тап по шапке открывает GroupInfoScreen вместо профиля.
+  final bool isGroup;
 
   const ChatScreen({
     super.key,
     required this.chatId,
     required this.chatTitle,
     this.otherUserId,
+    this.isGroup = false,
   });
 
   @override
@@ -90,6 +103,11 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _otherLastSeenAt;
   Timer? _presenceTimer;
 
+  // Ответ на сообщение — выбирается через долгое нажатие, показывается
+  // плашкой над полем ввода, сбрасывается после отправки/отмены.
+  Message? _replyingTo;
+  List<Map<String, dynamic>> _pinnedMessages = [];
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +118,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadReadStatus();
     _subscribeToReadStatus();
     _loadOtherPresence();
+    _loadPinnedMessages();
 
     _touchPresence();
     _presenceTimer = Timer.periodic(const Duration(seconds: 25), (_) => _touchPresence());
@@ -250,6 +269,200 @@ class _ChatScreenState extends State<ChatScreen> {
 
   static const _maxAttachmentBytes = 20 * 1024 * 1024; // 20 МБ — см. bucket limit
 
+  Future<void> _loadPinnedMessages() async {
+    try {
+      final data = await Supabase.instance.client
+          .rpc('list_pinned_messages', params: {'p_chat_id': widget.chatId});
+      if (!mounted) return;
+      setState(() => _pinnedMessages = List<Map<String, dynamic>>.from(data as List));
+    } catch (_) {}
+  }
+
+  // Ищем оригинал ответа среди уже загруженных сообщений — отдельный запрос
+  // не нужен, весь чат (последние 200 сообщений) и так уже в памяти.
+  Message? _findMessageById(String? id) {
+    if (id == null) return null;
+    for (final m in _messages) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
+
+  void _setReplyTo(Message msg) {
+    setState(() => _replyingTo = msg);
+  }
+
+  void _cancelReply() {
+    setState(() => _replyingTo = null);
+  }
+
+  Future<void> _togglePin(Message msg) async {
+    try {
+      await Supabase.instance.client.rpc(
+        msg.isPinned ? 'unpin_message' : 'pin_message',
+        params: {'p_message_id': msg.id},
+      );
+      await _loadPinnedMessages();
+      await _loadMessages();
+    } on PostgrestException catch (e) {
+      _showError(e.message);
+    }
+  }
+
+  Future<void> _deleteMessage(Message msg) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Удалить сообщение?'),
+        content: const Text('Это действие нельзя отменить.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    // Сначала чистим файл в Storage (если был) — после удаления строки
+    // сообщения путь к нему потеряется и файл-сирота останется навсегда.
+    if (msg.attachmentPath != null) {
+      await _tryDeleteOrphanedAttachment(msg.attachmentPath!);
+    }
+
+    try {
+      await Supabase.instance.client.rpc('delete_message', params: {'p_message_id': msg.id});
+      if (!mounted) return;
+      setState(() {
+        _messages.removeWhere((m) => m.id == msg.id);
+        _pinnedMessages.removeWhere((m) => m['id'] == msg.id);
+      });
+    } on PostgrestException catch (e) {
+      _showError(e.message);
+    }
+  }
+
+  void _showMessageActions(Message msg) {
+    final isMine = msg.senderId == _myUserId;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceAlt,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.reply, color: AppColors.cyan),
+              title: const Text('Ответить'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _setReplyTo(msg);
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                msg.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                color: AppColors.cyan,
+              ),
+              title: Text(msg.isPinned ? 'Открепить' : 'Закрепить'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _togglePin(msg);
+              },
+            ),
+            if (isMine)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: AppColors.danger),
+                title: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _deleteMessage(msg);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPinnedList() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceAlt,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('Закреплённые сообщения', style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _pinnedMessages.length,
+                  itemBuilder: (context, i) {
+                    final p = _pinnedMessages[i];
+                    final preview = ((p['content'] as String?)?.isNotEmpty == true)
+                        ? p['content'] as String
+                        : (p['attachment_type'] == 'image' ? '📷 Фото' : '📎 Файл');
+                    return ListTile(
+                      title: Text(p['sender_name'] as String? ?? '',
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                      subtitle: Text(preview, maxLines: 2, overflow: TextOverflow.ellipsis),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.close, size: 18, color: AppColors.textSecondary),
+                        onPressed: () async {
+                          Navigator.pop(sheetContext);
+                          await Supabase.instance.client
+                              .rpc('unpin_message', params: {'p_message_id': p['id']});
+                          _loadPinnedMessages();
+                          _loadMessages();
+                        },
+                      ),
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        _scrollToMessage(p['id'] as String);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _scrollToMessage(String id) {
+    final index = _messages.indexWhere((m) => m.id == id);
+    if (index == -1 || !_scrollController.hasClients) return;
+    // Приблизительная прокрутка по индексу — список без фиксированной высоты
+    // элементов, поэтому точный jumpTo невозможен без доп. измерений; этого
+    // достаточно, чтобы вывести нужное сообщение в область видимости.
+    final estimatedOffset = (index / _messages.length) * _scrollController.position.maxScrollExtent;
+    _scrollController.animateTo(
+      estimatedOffset.clamp(0, _scrollController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
@@ -265,6 +478,7 @@ class _ChatScreenState extends State<ChatScreen> {
             'sender_id': _myUserId,
             'sender_name': _displayName.isEmpty ? 'Без имени' : _displayName,
             'content': text,
+            if (_replyingTo != null) 'reply_to_id': _replyingTo!.id,
           })
           .select()
           .single();
@@ -276,6 +490,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!_messages.any((m) => m.id == message.id)) {
           _messages.add(message);
         }
+        _replyingTo = null;
       });
       _messageController.clear();
       _scrollToBottom();
@@ -446,6 +661,7 @@ class _ChatScreenState extends State<ChatScreen> {
             'attachment_size_bytes': attachmentSizeBytes,
             if (attachmentWidth != null) 'attachment_width': attachmentWidth,
             if (attachmentHeight != null) 'attachment_height': attachmentHeight,
+            if (_replyingTo != null) 'reply_to_id': _replyingTo!.id,
           })
           .select()
           .single();
@@ -456,6 +672,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!_messages.any((m) => m.id == message.id)) {
           _messages.add(message);
         }
+        _replyingTo = null;
       });
       _scrollToBottom();
     } on PostgrestException catch (e) {
@@ -540,18 +757,29 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: InkWell(
-          onTap: widget.otherUserId == null
-              ? null
-              : () {
+          onTap: widget.isGroup
+              ? () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => PublicProfileScreen(
-                        userId: widget.otherUserId!,
-                        initialDisplayName: widget.chatTitle,
+                      builder: (_) => GroupInfoScreen(
+                        chatId: widget.chatId,
+                        chatTitle: widget.chatTitle,
                       ),
                     ),
                   );
-                },
+                }
+              : widget.otherUserId == null
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PublicProfileScreen(
+                            userId: widget.otherUserId!,
+                            initialDisplayName: widget.chatTitle,
+                          ),
+                        ),
+                      );
+                    },
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -569,10 +797,49 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ),
+        actions: [
+          if (_pinnedMessages.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.push_pin),
+              tooltip: 'Закреплённые',
+              onPressed: _showPinnedList,
+            ),
+        ],
       ),
       body: RetroBackground(
         child: Column(
           children: [
+            if (_pinnedMessages.isNotEmpty)
+              Material(
+                color: AppColors.surfaceAlt,
+                child: InkWell(
+                  onTap: _showPinnedList,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.push_pin, size: 16, color: AppColors.cyan),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            ((_pinnedMessages.first['content'] as String?)?.isNotEmpty == true)
+                                ? _pinnedMessages.first['content'] as String
+                                : (_pinnedMessages.first['attachment_type'] == 'image'
+                                    ? '📷 Фото'
+                                    : '📎 Файл'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                          ),
+                        ),
+                        if (_pinnedMessages.length > 1)
+                          Text('${_pinnedMessages.length}',
+                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
@@ -582,82 +849,170 @@ class _ChatScreenState extends State<ChatScreen> {
                   final msg = _messages[index];
                   final isMine = msg.senderId == _myUserId;
                   final isRead = isMine && _isReadByOther(msg);
+                  final repliedTo = _findMessageById(msg.replyToId);
                   return Align(
                     alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Container(
-                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        gradient: isMine
-                            ? const LinearGradient(colors: [AppColors.purple, AppColors.blue])
-                            : null,
-                        color: isMine ? null : AppColors.surface,
-                        borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(16),
-                          topRight: const Radius.circular(16),
-                          bottomLeft: Radius.circular(isMine ? 16 : 4),
-                          bottomRight: Radius.circular(isMine ? 4 : 16),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!isMine)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 3),
-                              child: Text(
-                                msg.senderName,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                  color: AppColors.cyan,
-                                ),
-                              ),
-                            ),
-                          if (msg.hasAttachment)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: _AttachmentBubble(
-                                message: msg,
-                                resolveUrl: _resolveAttachmentUrl,
-                                formatSize: _formatFileSize,
-                              ),
-                            ),
-                          if (msg.content.trim().isNotEmpty)
-                            Text(msg.content, style: const TextStyle(color: AppColors.textPrimary)),
-                          const SizedBox(height: 4),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _formatTime(msg.createdAt),
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isMine
-                                      ? Colors.white.withValues(alpha: 0.75)
-                                      : AppColors.textSecondary,
-                                ),
-                              ),
-                              if (isMine) ...[
-                                const SizedBox(width: 4),
-                                Icon(
-                                  isRead ? Icons.done_all : Icons.done,
-                                  size: 14,
-                                  color: isRead
-                                      ? AppColors.cyan
-                                      : Colors.white.withValues(alpha: 0.75),
-                                ),
-                              ],
-                            ],
+                    child: GestureDetector(
+                      onLongPress: () => _showMessageActions(msg),
+                      child: Container(
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          gradient: isMine
+                              ? const LinearGradient(colors: [AppColors.purple, AppColors.blue])
+                              : null,
+                          color: isMine ? null : AppColors.surface,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isMine ? 16 : 4),
+                            bottomRight: Radius.circular(isMine ? 4 : 16),
                           ),
-                        ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (!isMine)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 3),
+                                child: Text(
+                                  msg.senderName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    color: AppColors.cyan,
+                                  ),
+                                ),
+                              ),
+                            if (msg.replyToId != null)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: const Border(
+                                    left: BorderSide(color: AppColors.cyan, width: 2.5),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      repliedTo?.senderName ?? 'Сообщение',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.cyan,
+                                      ),
+                                    ),
+                                    Text(
+                                      repliedTo == null
+                                          ? 'Сообщение недоступно'
+                                          : (repliedTo.content.trim().isNotEmpty
+                                              ? repliedTo.content
+                                              : (repliedTo.isImageAttachment ? '📷 Фото' : '📎 Файл')),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: isMine
+                                            ? Colors.white.withValues(alpha: 0.85)
+                                            : AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (msg.hasAttachment)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: _AttachmentBubble(
+                                  message: msg,
+                                  resolveUrl: _resolveAttachmentUrl,
+                                  formatSize: _formatFileSize,
+                                ),
+                              ),
+                            if (msg.content.trim().isNotEmpty)
+                              Text(msg.content, style: const TextStyle(color: AppColors.textPrimary)),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (msg.isPinned) ...[
+                                  Icon(
+                                    Icons.push_pin,
+                                    size: 11,
+                                    color: isMine
+                                        ? Colors.white.withValues(alpha: 0.75)
+                                        : AppColors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 3),
+                                ],
+                                Text(
+                                  _formatTime(msg.createdAt),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: isMine
+                                        ? Colors.white.withValues(alpha: 0.75)
+                                        : AppColors.textSecondary,
+                                  ),
+                                ),
+                                if (isMine) ...[
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    isRead ? Icons.done_all : Icons.done,
+                                    size: 14,
+                                    color: isRead
+                                        ? AppColors.cyan
+                                        : Colors.white.withValues(alpha: 0.75),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );
                 },
               ),
             ),
+            if (_replyingTo != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                color: AppColors.surfaceAlt,
+                child: Row(
+                  children: [
+                    const Icon(Icons.reply, size: 16, color: AppColors.cyan),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _replyingTo!.senderName,
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.cyan),
+                          ),
+                          Text(
+                            _replyingTo!.content.trim().isNotEmpty
+                                ? _replyingTo!.content
+                                : (_replyingTo!.isImageAttachment ? '📷 Фото' : '📎 Файл'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18, color: AppColors.textSecondary),
+                      onPressed: _cancelReply,
+                    ),
+                  ],
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.all(10),
               child: Row(

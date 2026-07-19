@@ -246,6 +246,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                         chatId: c['chat_id'] as String,
                                         chatTitle: title,
                                         otherUserId: c['other_user_id'] as String?,
+                                        isGroup: isGroup,
                                       ),
                                     ),
                                   )
