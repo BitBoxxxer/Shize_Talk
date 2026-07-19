@@ -1,7 +1,7 @@
 name: shize_talk
 description: "Kasey's Messanger from 26 year"
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 0.2.0
+version: 1.0.0+1
 
 environment:
   sdk: ^3.12.2
@@ -14,8 +14,7 @@ dependencies:
   image_picker: ^1.1.2
   image: ^4.2.0
   video_player: ^2.9.2       # превью видео при выборе участка для гифки
-  path_provider: ^2.1.4      # временные файлы при экспорте видео→гифка
-  ffmpeg_kit_flutter_new: ^4.1.0
+  video_thumbnail: ^0.5.3    # извлечение кадров видео (замена ffmpeg — см. video_to_gif_screen.dart)
   shared_preferences: ^2.3.3  # локальный device_id + кэш выбранного языка
 
 dev_dependencies:

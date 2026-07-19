@@ -19,6 +19,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   bool _loading = true;
   Timer? _deviceTimer;
 
+  // Компактное превью вместо полноразмерной аватарки в списке — если его
+  // ещё нет (старая аватарка, залитая до этой фичи), падаем на полный URL.
+  String? _chatAvatarUrl(Map<String, dynamic> chat) =>
+      (chat['other_thumb_url'] as String?) ?? (chat['other_avatar_url'] as String?);
+
   @override
   void initState() {
     super.initState();
@@ -117,10 +122,10 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                               children: [
                                 CircleAvatar(
                                   backgroundColor: AppColors.blue.withValues(alpha: 0.3),
-                                  backgroundImage: (c['other_avatar_url'] as String?) != null
-                                      ? NetworkImage(c['other_avatar_url'] as String)
+                                  backgroundImage: _chatAvatarUrl(c) != null
+                                      ? NetworkImage(_chatAvatarUrl(c)!)
                                       : null,
-                                  child: (c['other_avatar_url'] as String?) == null
+                                  child: _chatAvatarUrl(c) == null
                                       ? Text(
                                           title.isNotEmpty ? title[0].toUpperCase() : '?',
                                           style: const TextStyle(

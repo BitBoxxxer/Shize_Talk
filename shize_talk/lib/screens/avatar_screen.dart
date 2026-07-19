@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
+import '../services/avatar_thumbnail.dart';
 import 'image_crop_screen.dart';
 import 'video_to_gif_screen.dart';
 
@@ -13,8 +14,9 @@ import 'video_to_gif_screen.dart';
 // Перед загрузкой пользователь выбирает область картинки/гифки/видео на
 // экране-кроппере (pinch/drag, как в Telegram/Discord) — так широкие фото
 // с героем не в центре можно аккуратно подогнать под квадратную аватарку.
-// Видео конвертируется в гифку на устройстве через ffmpeg_kit_flutter_new
-// (только Android/iOS/macOS — на Web эта опция скрыта).
+// Видео конвертируется в гифку на устройстве через video_thumbnail + image
+// (без ffmpeg — см. подробное объяснение в video_to_gif_screen.dart) —
+// только Android/iOS, на Web/десктопе эта опция отключена.
 class AvatarScreen extends StatefulWidget {
   const AvatarScreen({super.key});
 
@@ -127,7 +129,8 @@ class _AvatarScreenState extends State<AvatarScreen> {
       }
 
       final userId = Supabase.instance.client.auth.currentUser!.id;
-      final path = '$userId/${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final path = '$userId/$ts.$ext';
 
       await Supabase.instance.client.storage.from('avatars').uploadBinary(
             path,
@@ -140,10 +143,29 @@ class _AvatarScreenState extends State<AvatarScreen> {
 
       final publicUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(path);
 
+      // Компактное статичное превью (160×160 JPEG, ~72% качества) — то, что
+      // реально грузится в списке чатов/друзей/поиске вместо полноразмерной
+      // картинки/гифки. Тот же принцип, что у превью видео на YouTube.
+      String? thumbUrl;
+      try {
+        final thumbBytes = await generateAvatarThumbnail(uploadBytes);
+        final thumbPath = '$userId/${ts}_thumb.jpg';
+        await Supabase.instance.client.storage.from('avatars').uploadBinary(
+              thumbPath,
+              thumbBytes,
+              fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+            );
+        thumbUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(thumbPath);
+      } catch (_) {
+        // Если генерация превью почему-то не удалась — не блокируем загрузку
+        // самой аватарки, просто списки покажут полноразмерную картинку.
+      }
+
       await Supabase.instance.client.rpc('add_profile_avatar', params: {
         'p_storage_path': path,
         'p_public_url': publicUrl,
         'p_media_type': mediaType,
+        'p_thumb_url': thumbUrl,
       });
 
       await _loadAvatars();
@@ -225,13 +247,20 @@ class _AvatarScreenState extends State<AvatarScreen> {
     try {
       await Supabase.instance.client.rpc('delete_profile_avatar', params: {'p_avatar_id': avatar['id']});
 
-      // Физический файл из Storage удаляем отдельно, чтобы не копить мусор.
-      final url = avatar['public_url'] as String;
+      // Физический файл из Storage удаляем отдельно, чтобы не копить мусор
+      // (и полноразмерный файл, и его превью).
       final marker = '/avatars/';
-      final idx = url.indexOf(marker);
-      if (idx != -1) {
-        final path = url.substring(idx + marker.length);
-        await Supabase.instance.client.storage.from('avatars').remove([path]);
+      final toRemove = <String>[];
+      final url = avatar['public_url'] as String;
+      final urlIdx = url.indexOf(marker);
+      if (urlIdx != -1) toRemove.add(url.substring(urlIdx + marker.length));
+      final thumbUrl = avatar['thumb_url'] as String?;
+      if (thumbUrl != null) {
+        final thumbIdx = thumbUrl.indexOf(marker);
+        if (thumbIdx != -1) toRemove.add(thumbUrl.substring(thumbIdx + marker.length));
+      }
+      if (toRemove.isNotEmpty) {
+        await Supabase.instance.client.storage.from('avatars').remove(toRemove);
       }
 
       await _loadAvatars();
@@ -287,7 +316,7 @@ class _AvatarScreenState extends State<AvatarScreen> {
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(14),
                                   child: Image.network(
-                                    avatar['public_url'] as String,
+                                    (avatar['thumb_url'] as String?) ?? avatar['public_url'] as String,
                                     fit: BoxFit.cover,
                                     errorBuilder: (_, _, _) => Container(
                                       color: AppColors.surface,

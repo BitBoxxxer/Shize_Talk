@@ -168,6 +168,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                   title: '@${u['username']}',
                   subtitle: u['display_name'] as String? ?? '',
                   avatarUrl: u['avatar_url'] as String?,
+                  thumbUrl: u['thumb_url'] as String?,
                   trailing: TextButton(
                     onPressed: () => _sendRequest(u['username'] as String),
                     child: const Text('Добавить'),
@@ -196,6 +197,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
           title: '@${r['requester_username']}',
           subtitle: r['requester_display_name'] as String? ?? '',
           avatarUrl: r['requester_avatar_url'] as String?,
+          thumbUrl: r['requester_thumb_url'] as String?,
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -233,6 +235,7 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
           title: title,
           subtitle: '@${f['username']}',
           avatarUrl: f['avatar_url'] as String?,
+          thumbUrl: f['thumb_url'] as String?,
           onTap: () => _openChatWith(f['friend_id'] as String, title),
           trailing: const Icon(Icons.chat_bubble_outline, color: AppColors.cyan),
         );
@@ -245,6 +248,7 @@ class _UserTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final String? avatarUrl;
+  final String? thumbUrl;
   final Widget? trailing;
   final VoidCallback? onTap;
 
@@ -252,12 +256,16 @@ class _UserTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.avatarUrl,
+    this.thumbUrl,
     this.trailing,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Компактное превью вместо полноразмерной аватарки в списке — если его
+    // ещё нет (старая аватарка, залитая до этой фичи), падаем на полный URL.
+    final displayUrl = thumbUrl ?? avatarUrl;
     return Card(
       color: AppColors.surface,
       margin: const EdgeInsets.only(bottom: 10),
@@ -266,8 +274,8 @@ class _UserTile extends StatelessWidget {
         onTap: onTap,
         leading: CircleAvatar(
           backgroundColor: AppColors.purple.withValues(alpha: 0.3),
-          backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl!) : null,
-          child: avatarUrl == null
+          backgroundImage: displayUrl != null ? NetworkImage(displayUrl) : null,
+          child: displayUrl == null
               ? Text(
                   title.isNotEmpty ? title[0].toUpperCase() : '?',
                   style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
