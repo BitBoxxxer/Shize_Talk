@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/chat_attachment_compress.dart';
 import '../theme/app_theme.dart';
+import 'public_profile_screen.dart';
 
 class Message {
   final String id;
@@ -538,21 +539,35 @@ class _ChatScreenState extends State<ChatScreen> {
     final subtitle = _presenceSubtitle();
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(widget.chatTitle),
-            if (subtitle != null)
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.normal,
-                  color: subtitle == 'в сети' ? AppColors.success : AppColors.textSecondary,
+        title: InkWell(
+          onTap: widget.otherUserId == null
+              ? null
+              : () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PublicProfileScreen(
+                        userId: widget.otherUserId!,
+                        initialDisplayName: widget.chatTitle,
+                      ),
+                    ),
+                  );
+                },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.chatTitle),
+              if (subtitle != null)
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.normal,
+                    color: subtitle == 'в сети' ? AppColors.success : AppColors.textSecondary,
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
       body: RetroBackground(

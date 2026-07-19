@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
 import 'chat_screen.dart';
+import 'public_profile_screen.dart';
 
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({super.key});
@@ -80,6 +81,51 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
     } on PostgrestException catch (e) {
       setState(() => _actionError = e.message);
     }
+  }
+
+  Future<void> _removeFriend(String friendId, String title) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Удалить из друзей?'),
+        content: Text('$title будет удалён(а) из списка друзей.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await Supabase.instance.client.rpc('remove_friend', params: {'p_friend_id': friendId});
+      await _loadFriends();
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  void _openProfile(String userId, {String? displayName, String? username, String? avatarUrl}) {
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => PublicProfileScreen(
+              userId: userId,
+              initialDisplayName: displayName,
+              initialUsername: username,
+              initialAvatarUrl: avatarUrl,
+            ),
+          ),
+        )
+        .then((_) {
+      _loadFriends();
+      _loadRequests();
+    });
   }
 
   Future<void> _openChatWith(String friendId, String? title) async {
@@ -169,6 +215,12 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
                   subtitle: u['display_name'] as String? ?? '',
                   avatarUrl: u['avatar_url'] as String?,
                   thumbUrl: u['thumb_url'] as String?,
+                  onTap: () => _openProfile(
+                    u['id'] as String,
+                    displayName: u['display_name'] as String?,
+                    username: u['username'] as String?,
+                    avatarUrl: (u['thumb_url'] as String?) ?? (u['avatar_url'] as String?),
+                  ),
                   trailing: TextButton(
                     onPressed: () => _sendRequest(u['username'] as String),
                     child: const Text('Добавить'),
@@ -198,6 +250,12 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
           subtitle: r['requester_display_name'] as String? ?? '',
           avatarUrl: r['requester_avatar_url'] as String?,
           thumbUrl: r['requester_thumb_url'] as String?,
+          onTap: () => _openProfile(
+            r['requester_id'] as String,
+            displayName: r['requester_display_name'] as String?,
+            username: r['requester_username'] as String?,
+            avatarUrl: (r['requester_thumb_url'] as String?) ?? (r['requester_avatar_url'] as String?),
+          ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -236,8 +294,34 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
           subtitle: '@${f['username']}',
           avatarUrl: f['avatar_url'] as String?,
           thumbUrl: f['thumb_url'] as String?,
-          onTap: () => _openChatWith(f['friend_id'] as String, title),
-          trailing: const Icon(Icons.chat_bubble_outline, color: AppColors.cyan),
+          onTap: () => _openProfile(
+            f['friend_id'] as String,
+            displayName: f['display_name'] as String?,
+            username: f['username'] as String?,
+            avatarUrl: (f['thumb_url'] as String?) ?? (f['avatar_url'] as String?),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chat_bubble_outline, color: AppColors.cyan),
+                onPressed: () => _openChatWith(f['friend_id'] as String, title),
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: AppColors.textSecondary),
+                color: AppColors.surface,
+                onSelected: (value) {
+                  if (value == 'remove') _removeFriend(f['friend_id'] as String, title);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'remove',
+                    child: Text('Удалить из друзей', style: TextStyle(color: AppColors.danger)),
+                  ),
+                ],
+              ),
+            ],
+          ),
         );
       },
     );

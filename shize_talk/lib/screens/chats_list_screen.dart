@@ -6,6 +6,7 @@ import '../services/device_registry.dart';
 import 'chat_screen.dart';
 import 'friends_screen.dart';
 import 'profile_screen.dart';
+import 'create_group_screen.dart';
 
 class ChatsListScreen extends StatefulWidget {
   const ChatsListScreen({super.key});
@@ -38,6 +39,62 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   void dispose() {
     _deviceTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openFavorites() async {
+    try {
+      final chatId =
+          await Supabase.instance.client.rpc('get_or_create_favorites_chat') as String;
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(chatId: chatId, chatTitle: 'Избранное'),
+        ),
+      );
+      _loadChats();
+    } catch (_) {
+      // сеть могла подвести — просто ничего не открываем, пользователь попробует снова
+    }
+  }
+
+  Future<void> _showNewChatMenu() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.person_add_alt, color: AppColors.cyan),
+              title: const Text('Написать другу'),
+              onTap: () => Navigator.pop(context, 'friend'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.groups_outlined, color: AppColors.cyan),
+              title: const Text('Новая группа'),
+              onTap: () => Navigator.pop(context, 'group'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'friend') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const FriendsScreen()),
+      );
+    } else if (choice == 'group') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+      );
+    }
+    _loadChats();
   }
 
   Future<void> _loadChats() async {
@@ -83,30 +140,52 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           onRefresh: _loadChats,
           child: _loading
               ? const Center(child: CircularProgressIndicator(color: AppColors.cyan))
-              : _chats.isEmpty
-                  ? ListView(
-                      children: const [
-                        SizedBox(height: 120),
-                        Center(
+              : ListView(
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    // "Избранное" — заметки самому себе, как в Телеграме/Дискорде.
+                    // Показываем всегда первым пунктом, чат создаётся лениво по тапу.
+                    Card(
+                      color: AppColors.surface,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      child: ListTile(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: const BoxDecoration(
+                            gradient: AppColors.primaryGradient,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.bookmark, color: Colors.white, size: 20),
+                        ),
+                        title: const Text('Избранное', style: TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: const Text('Заметки для себя',
+                            style: TextStyle(color: AppColors.textSecondary)),
+                        onTap: _openFavorites,
+                      ),
+                    ),
+                    if (_chats.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 100),
+                        child: Center(
                           child: Text(
                             'Пока нет чатов.\nДобавьте друга по юзернейму, чтобы начать.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: AppColors.textSecondary),
                           ),
                         ),
-                      ],
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _chats.length,
-                      itemBuilder: (context, i) {
-                        final c = _chats[i];
+                      )
+                    else
+                      ..._chats.map((c) {
+                        final isGroup = c['chat_type'] == 'group';
                         final title = (c['chat_title'] as String?) ??
                             (c['other_display_name'] as String?) ??
                             (c['other_username'] != null ? '@${c['other_username']}' : 'Чат');
                         final preview = c['last_message'] as String?;
                         final lastSeenRaw = c['other_last_seen_at'] as String?;
-                        final isOnline = lastSeenRaw != null &&
+                        final isOnline = !isGroup &&
+                            lastSeenRaw != null &&
                             DateTime.now()
                                     .difference(DateTime.parse(lastSeenRaw).toLocal())
                                     .inSeconds <
@@ -126,11 +205,14 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                       ? NetworkImage(_chatAvatarUrl(c)!)
                                       : null,
                                   child: _chatAvatarUrl(c) == null
-                                      ? Text(
-                                          title.isNotEmpty ? title[0].toUpperCase() : '?',
-                                          style: const TextStyle(
-                                              color: AppColors.textPrimary, fontWeight: FontWeight.bold),
-                                        )
+                                      ? (isGroup
+                                          ? const Icon(Icons.groups, color: AppColors.textPrimary, size: 20)
+                                          : Text(
+                                              title.isNotEmpty ? title[0].toUpperCase() : '?',
+                                              style: const TextStyle(
+                                                  color: AppColors.textPrimary,
+                                                  fontWeight: FontWeight.bold),
+                                            ))
                                       : null,
                                 ),
                                 if (isOnline)
@@ -171,18 +253,14 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                             },
                           ),
                         );
-                      },
-                    ),
+                      }),
+                  ],
+                ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.purple,
-        onPressed: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const FriendsScreen()),
-          );
-          _loadChats();
-        },
+        onPressed: _showNewChatMenu,
         child: const Icon(Icons.chat, color: Colors.white),
       ),
     );

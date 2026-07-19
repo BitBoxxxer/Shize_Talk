@@ -27,6 +27,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Shize Talk',
+      debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
       routes: {
         '/': (_) => const RootGate(),
