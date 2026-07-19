@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'theme/app_theme.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/chats_list_screen.dart';
 import 'screens/username_setup_screen.dart';
+import 'services/device_registry.dart';
 
 // ЗАМЕНИТЬ на свои значения из Supabase → Project Settings → API
 const supabaseUrl = 'https://zethqqyaddlztgdojiwe.supabase.co';
@@ -53,6 +55,10 @@ class _RootGateState extends State<RootGate> {
 
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return const WelcomeScreen();
+
+    // Регистрируем/обновляем это устройство в списке (экран "Устройства" в
+    // настройках) — не блокируем UI, если запрос не удастся, тихо игнорируем.
+    unawaited(DeviceRegistry.touch());
 
     try {
       final profile = await Supabase.instance.client

@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
 import 'avatar_screen.dart';
+import 'settings_screen.dart';
 
+/// Экран "Профиль" — как в Телеграме: просмотр (аватарка, имя, юзернейм,
+/// описание, дата рождения), а редактирование и аккаунтные действия вынесены
+/// в отдельные экраны (EditProfileScreen / SettingsScreen).
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -11,17 +15,15 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _usernameController = TextEditingController();
-  final _displayNameController = TextEditingController();
-  final _bioController = TextEditingController();
-  final _usernamePattern = RegExp(r'^[a-zA-Z0-9_]{3,20}$');
-
+  String _username = '';
+  String _displayName = '';
+  String _bio = '';
   DateTime? _birthDate;
   String? _avatarUrl;
+  String _avatarVisibility = 'everyone';
+  String _language = 'ru';
   bool _loading = true;
-  bool _saving = false;
   String? _error;
-  String? _success;
 
   @override
   void initState() {
@@ -35,14 +37,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final data = await Supabase.instance.client.rpc('get_my_profile');
       final row = (data as List).isNotEmpty ? data.first as Map<String, dynamic> : null;
       if (row != null) {
-        _usernameController.text = (row['username'] as String?) ?? '';
-        _displayNameController.text = (row['display_name'] as String?) ?? '';
-        _bioController.text = (row['bio'] as String?) ?? '';
+        _username = (row['username'] as String?) ?? '';
+        _displayName = (row['display_name'] as String?) ?? '';
+        _bio = (row['bio'] as String?) ?? '';
         _avatarUrl = row['avatar_url'] as String?;
+        _avatarVisibility = (row['avatar_visibility'] as String?) ?? 'everyone';
+        _language = (row['language'] as String?) ?? 'ru';
         final rawBirth = row['birth_date'] as String?;
-        if (rawBirth != null) {
-          _birthDate = DateTime.tryParse(rawBirth);
-        }
+        _birthDate = rawBirth != null ? DateTime.tryParse(rawBirth) : null;
       }
     } catch (e) {
       _error = 'Не удалось загрузить профиль: $e';
@@ -51,146 +53,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _pickBirthDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _birthDate ?? DateTime(now.year - 18, now.month, now.day),
-      firstDate: DateTime(now.year - 100),
-      lastDate: now,
-      helpText: 'Дата рождения',
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context).colorScheme.copyWith(
-                  primary: AppColors.purple,
-                  onPrimary: Colors.white,
-                  surface: AppColors.surfaceAlt,
-                ),
-          ),
-          child: child!,
-        );
-      },
-    );
-    if (picked != null) setState(() => _birthDate = picked);
-  }
-
-  Future<void> _save() async {
-    final username = _usernameController.text.trim();
-    final displayName = _displayNameController.text.trim();
-    final bio = _bioController.text.trim();
-
-    if (!_usernamePattern.hasMatch(username)) {
-      setState(() {
-        _error = 'Юзернейм: 3-20 символов, латиница/цифры/подчёркивание';
-        _success = null;
-      });
-      return;
-    }
-    if (displayName.isEmpty) {
-      setState(() {
-        _error = 'Имя не может быть пустым';
-        _success = null;
-      });
-      return;
-    }
-    if (bio.length > 200) {
-      setState(() {
-        _error = 'Описание профиля слишком длинное (максимум 200 символов)';
-        _success = null;
-      });
-      return;
-    }
-
-    setState(() {
-      _saving = true;
-      _error = null;
-      _success = null;
-    });
-
-    try {
-      await Supabase.instance.client.rpc('set_username', params: {'p_username': username});
-      await Supabase.instance.client.rpc('update_profile_details', params: {
-        'p_display_name': displayName,
-        'p_bio': bio.isEmpty ? null : bio,
-        'p_birth_date': _birthDate?.toIso8601String().split('T').first,
-      });
-      if (!mounted) return;
-      setState(() => _success = 'Профиль обновлён');
-    } on PostgrestException catch (e) {
-      setState(() => _error = e.message);
-    } catch (e) {
-      setState(() => _error = 'Ошибка: $e');
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _confirmSignOut() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surfaceAlt,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Выйти из аккаунта?'),
-        content: const Text(
-          'Вам потребуется email и код из письма, чтобы войти снова.',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            child: const Text('Выйти'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await Supabase.instance.client.auth.signOut();
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-    }
-  }
-
-  void _addAccountComingSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Одновременный вход в несколько аккаунтов пока в разработке — скоро добавим',
-        ),
-      ),
-    );
-  }
-
   String _formatBirthDate(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
 
-  @override
-  void dispose() {
-    _usernameController.dispose();
-    _displayNameController.dispose();
-    _bioController.dispose();
-    super.dispose();
+  Future<void> _openSettings() async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(
+          username: _username,
+          displayName: _displayName,
+          bio: _bio,
+          birthDate: _birthDate,
+          avatarVisibility: _avatarVisibility,
+          language: _language,
+        ),
+      ),
+    );
+    if (changed == true) _loadProfile();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Профиль')),
+      appBar: AppBar(
+        title: const Text('Профиль'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Настройки',
+            onPressed: _openSettings,
+          ),
+        ],
+      ),
       body: RetroBackground(
         child: _loading
             ? const Center(child: CircularProgressIndicator(color: AppColors.cyan))
-            : SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+            : RefreshIndicator(
+                color: AppColors.cyan,
+                onRefresh: _loadProfile,
+                child: ListView(
+                  padding: const EdgeInsets.all(24),
                   children: [
+                    if (_error != null) ...[
+                      Text(_error!, style: const TextStyle(color: AppColors.danger)),
+                      const SizedBox(height: 16),
+                    ],
                     Center(
                       child: GestureDetector(
                         onTap: () async {
@@ -203,124 +110,111 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           alignment: Alignment.bottomRight,
                           children: [
                             CircleAvatar(
-                              radius: 44,
+                              radius: 56,
                               backgroundColor: AppColors.purple.withValues(alpha: 0.3),
                               backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null,
                               child: _avatarUrl == null
                                   ? Text(
-                                      _displayNameController.text.isNotEmpty
-                                          ? _displayNameController.text[0].toUpperCase()
-                                          : '?',
-                                      style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                                      _displayName.isNotEmpty ? _displayName[0].toUpperCase() : '?',
+                                      style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold),
                                     )
                                   : null,
                             ),
                             Container(
-                              padding: const EdgeInsets.all(6),
+                              padding: const EdgeInsets.all(7),
                               decoration: const BoxDecoration(
                                 gradient: AppColors.primaryGradient,
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                              child: const Icon(Icons.camera_alt, size: 16, color: Colors.white),
                             ),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 16),
                     Center(
-                      child: TextButton(
-                        onPressed: () async {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => const AvatarScreen()),
-                          );
-                          _loadProfile();
-                        },
-                        child: const Text('Изменить аватарку'),
+                      child: Text(
+                        _displayName.isEmpty ? 'Без имени' : _displayName,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                       ),
                     ),
-                    const SizedBox(height: 32),
-                    const Text('Имя', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _displayNameController,
-                      decoration: const InputDecoration(hintText: 'Ваше имя'),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text('Юзернейм', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _usernameController,
-                      decoration: const InputDecoration(prefixText: '@', hintText: 'username'),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text('О себе', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _bioController,
-                      maxLength: 200,
-                      maxLines: 3,
-                      decoration: const InputDecoration(hintText: 'Пара слов о себе'),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('Дата рождения', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    InkWell(
-                      onTap: _pickBirthDate,
-                      borderRadius: BorderRadius.circular(12),
-                      child: InputDecorator(
-                        decoration: const InputDecoration(),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.cake_outlined, size: 18, color: AppColors.textSecondary),
-                            const SizedBox(width: 10),
-                            Text(
-                              _birthDate != null ? _formatBirthDate(_birthDate!) : 'Не указана',
-                              style: TextStyle(
-                                color: _birthDate != null ? AppColors.textPrimary : AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
+                    if (_username.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Center(
+                        child: Text('@$_username', style: const TextStyle(color: AppColors.textSecondary)),
                       ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 14),
-                      Text(_error!, style: const TextStyle(color: AppColors.danger)),
-                    ],
-                    if (_success != null) ...[
-                      const SizedBox(height: 14),
-                      Text(_success!, style: const TextStyle(color: AppColors.success)),
                     ],
                     const SizedBox(height: 28),
-                    ElevatedButton(
-                      onPressed: _saving ? null : _save,
-                      child: _saving
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Text('Сохранить'),
-                    ),
-                    const SizedBox(height: 48),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: _addAccountComingSoon,
-                      icon: const Icon(Icons.add, color: AppColors.cyan),
-                      label: const Text('Добавить аккаунт'),
+                    _InfoRow(
+                      icon: Icons.info_outline,
+                      label: 'О себе',
+                      value: _bio.isEmpty ? 'Не указано' : _bio,
                     ),
                     const SizedBox(height: 12),
+                    _InfoRow(
+                      icon: Icons.cake_outlined,
+                      label: 'Дата рождения',
+                      value: _birthDate != null ? _formatBirthDate(_birthDate!) : 'Не указана',
+                    ),
+                    const SizedBox(height: 28),
                     OutlinedButton.icon(
-                      onPressed: _confirmSignOut,
-                      icon: const Icon(Icons.logout, color: AppColors.danger),
-                      label: const Text('Выйти из аккаунта', style: TextStyle(color: AppColors.danger)),
-                      style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.danger)),
+                      onPressed: () async {
+                        final changed = await Navigator.of(context).push<bool>(
+                          MaterialPageRoute(
+                            builder: (_) => SettingsScreen(
+                              username: _username,
+                              displayName: _displayName,
+                              bio: _bio,
+                              birthDate: _birthDate,
+                              avatarVisibility: _avatarVisibility,
+                              language: _language,
+                            ),
+                          ),
+                        );
+                        if (changed == true) _loadProfile();
+                      },
+                      icon: const Icon(Icons.edit_outlined, color: AppColors.cyan),
+                      label: const Text('Изменить профиль'),
                     ),
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _InfoRow({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 20, color: AppColors.textSecondary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  const SizedBox(height: 2),
+                  Text(value, style: const TextStyle(color: AppColors.textPrimary)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

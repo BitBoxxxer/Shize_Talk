@@ -1,7 +1,7 @@
 name: shize_talk
 description: "Kasey's Messanger from 26 year"
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 1.0.0+1
+version: 0.2.0
 
 environment:
   sdk: ^3.12.2
@@ -17,6 +17,7 @@ dependencies:
   video_thumbnail: ^0.5.3    # кадр видео для отображения в кроппере
   path_provider: ^2.1.4      # временные файлы при экспорте видео→гифка
   ffmpeg_kit_flutter_new: ^4.1.0
+  shared_preferences: ^2.3.3  # локальный device_id + кэш выбранного языка
 
 dev_dependencies:
   flutter_test:

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
+import '../services/device_registry.dart';
 import 'chat_screen.dart';
 import 'friends_screen.dart';
 import 'profile_screen.dart';
@@ -15,11 +17,22 @@ class ChatsListScreen extends StatefulWidget {
 class _ChatsListScreenState extends State<ChatsListScreen> {
   List<Map<String, dynamic>> _chats = [];
   bool _loading = true;
+  Timer? _deviceTimer;
 
   @override
   void initState() {
     super.initState();
     _loadChats();
+    // Список чатов — главный экран, живёт весь сеанс работы с приложением,
+    // поэтому именно тут держим устройство "свежим" в экране Настройки → Устройства.
+    DeviceRegistry.touch();
+    _deviceTimer = Timer.periodic(const Duration(minutes: 5), (_) => DeviceRegistry.touch());
+  }
+
+  @override
+  void dispose() {
+    _deviceTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadChats() async {
