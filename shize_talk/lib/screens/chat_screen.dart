@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../services/chat_attachment_compress.dart';
 import '../theme/app_theme.dart';
 
 class Message {
@@ -10,12 +14,29 @@ class Message {
   final String content;
   final DateTime createdAt; // всегда хранится в local time (см. fromMap)
 
+  // Вложение (фото или произвольный файл) — null, если сообщение только текст.
+  final String? attachmentPath;
+  final String? attachmentType; // 'image' | 'file'
+  final String? attachmentName;
+  final int? attachmentSizeBytes;
+  final int? attachmentWidth;
+  final int? attachmentHeight;
+
+  bool get hasAttachment => attachmentPath != null;
+  bool get isImageAttachment => attachmentType == 'image';
+
   Message({
     required this.id,
     required this.senderId,
     required this.senderName,
     required this.content,
     required this.createdAt,
+    this.attachmentPath,
+    this.attachmentType,
+    this.attachmentName,
+    this.attachmentSizeBytes,
+    this.attachmentWidth,
+    this.attachmentHeight,
   });
 
   factory Message.fromMap(Map<String, dynamic> map) {
@@ -23,10 +44,16 @@ class Message {
       id: map['id'] as String,
       senderId: map['sender_id'] as String? ?? '',
       senderName: map['sender_name'] as String,
-      content: map['content'] as String,
+      content: map['content'] as String? ?? '',
       // Supabase отдаёт timestamptz в UTC — .toLocal() переводит его в
       // часовой пояс, установленный на устройстве пользователя.
       createdAt: DateTime.parse(map['created_at'] as String).toLocal(),
+      attachmentPath: map['attachment_path'] as String?,
+      attachmentType: map['attachment_type'] as String?,
+      attachmentName: map['attachment_name'] as String?,
+      attachmentSizeBytes: map['attachment_size_bytes'] as int?,
+      attachmentWidth: map['attachment_width'] as int?,
+      attachmentHeight: map['attachment_height'] as int?,
     );
   }
 }
@@ -213,6 +240,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   bool _sending = false;
+  bool _uploadingAttachment = false;
+
+  // Подписанные ссылки на вложения истекают, поэтому не хранятся в БД —
+  // кэшируем на время жизни экрана, чтобы не дёргать Storage на каждый
+  // rebuild списка сообщений.
+  final Map<String, String> _signedUrlCache = {};
+
+  static const _maxAttachmentBytes = 20 * 1024 * 1024; // 20 МБ — см. bucket limit
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
@@ -260,6 +295,212 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String _formatTime(DateTime dt) =>
       '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _pickAttachment() async {
+    final choice = await showModalBottomSheet<_AttachmentChoice>(
+      context: context,
+      backgroundColor: AppColors.surfaceAlt,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 16, bottom: 8),
+              child: Text('Отправить', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_outlined, color: AppColors.cyan),
+              title: const Text('Фото'),
+              subtitle: const Text('Сожмётся перед отправкой', style: TextStyle(fontSize: 12)),
+              onTap: () => Navigator.of(sheetContext).pop(_AttachmentChoice.photo),
+            ),
+            ListTile(
+              leading: const Icon(Icons.attach_file, color: AppColors.cyan),
+              title: const Text('Файл'),
+              subtitle: const Text('Любой формат, до 20 МБ', style: TextStyle(fontSize: 12)),
+              onTap: () => Navigator.of(sheetContext).pop(_AttachmentChoice.file),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == null) return;
+    if (choice == _AttachmentChoice.photo) {
+      await _sendPhoto();
+    } else {
+      await _sendFile();
+    }
+  }
+
+  Future<void> _sendPhoto() async {
+    final picker = ImagePicker();
+    final XFile? file = await picker.pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+    if (_myUserId == null) return;
+
+    setState(() => _uploadingAttachment = true);
+    try {
+      final rawBytes = await file.readAsBytes();
+      final compressed = await compressChatImage(rawBytes);
+
+      final messageId = _generateAttachmentId();
+      final path = '${widget.chatId}/$messageId.jpg';
+
+      await Supabase.instance.client.storage.from('chat_attachments').uploadBinary(
+            path,
+            compressed.bytes,
+            fileOptions: const FileOptions(contentType: 'image/jpeg'),
+          );
+
+      await _insertAttachmentMessage(
+        attachmentPath: path,
+        attachmentType: 'image',
+        attachmentName: file.name,
+        attachmentSizeBytes: compressed.bytes.lengthInBytes,
+        attachmentWidth: compressed.width,
+        attachmentHeight: compressed.height,
+      );
+    } on StorageException catch (e) {
+      _showError('Не удалось загрузить фото: ${e.message}');
+    } catch (e) {
+      _showError('Ошибка отправки фото: $e');
+    } finally {
+      if (mounted) setState(() => _uploadingAttachment = false);
+    }
+  }
+
+  Future<void> _sendFile() async {
+    final result = await FilePicker.pickFiles(withData: true);
+    if (result == null || result.files.isEmpty) return;
+    if (_myUserId == null) return;
+
+    final picked = result.files.first;
+    final bytes = picked.bytes;
+    if (bytes == null) {
+      _showError('Не удалось прочитать файл');
+      return;
+    }
+    if (bytes.lengthInBytes > _maxAttachmentBytes) {
+      _showError('Файл больше 20 МБ — выберите файл поменьше');
+      return;
+    }
+
+    setState(() => _uploadingAttachment = true);
+    try {
+      final messageId = _generateAttachmentId();
+      final ext = picked.extension != null ? '.${picked.extension}' : '';
+      final path = '${widget.chatId}/$messageId$ext';
+
+      await Supabase.instance.client.storage.from('chat_attachments').uploadBinary(
+            path,
+            bytes,
+            fileOptions: const FileOptions(contentType: 'application/octet-stream'),
+          );
+
+      await _insertAttachmentMessage(
+        attachmentPath: path,
+        attachmentType: 'file',
+        attachmentName: picked.name,
+        attachmentSizeBytes: bytes.lengthInBytes,
+      );
+    } on StorageException catch (e) {
+      _showError('Не удалось загрузить файл: ${e.message}');
+    } catch (e) {
+      _showError('Ошибка отправки файла: $e');
+    } finally {
+      if (mounted) setState(() => _uploadingAttachment = false);
+    }
+  }
+
+  // Простой уникальный идентификатор для имени файла в Storage — реальный
+  // id строки messages узнаём только после insert (см. _insertAttachmentMessage),
+  // а путь к файлу нужен заранее, поэтому используем отдельный временный id.
+  String _generateAttachmentId() =>
+      '${DateTime.now().microsecondsSinceEpoch}_${_myUserId?.substring(0, 8) ?? 'anon'}';
+
+  Future<void> _insertAttachmentMessage({
+    required String attachmentPath,
+    required String attachmentType,
+    required String attachmentName,
+    required int attachmentSizeBytes,
+    int? attachmentWidth,
+    int? attachmentHeight,
+  }) async {
+    try {
+      final inserted = await Supabase.instance.client
+          .from('messages')
+          .insert({
+            'chat_id': widget.chatId,
+            'sender_id': _myUserId,
+            'sender_name': _displayName.isEmpty ? 'Без имени' : _displayName,
+            'content': '',
+            'attachment_path': attachmentPath,
+            'attachment_type': attachmentType,
+            'attachment_name': attachmentName,
+            'attachment_size_bytes': attachmentSizeBytes,
+            if (attachmentWidth != null) 'attachment_width': attachmentWidth,
+            if (attachmentHeight != null) 'attachment_height': attachmentHeight,
+          })
+          .select()
+          .single();
+
+      if (!mounted) return;
+      final message = Message.fromMap(inserted);
+      setState(() {
+        if (!_messages.any((m) => m.id == message.id)) {
+          _messages.add(message);
+        }
+      });
+      _scrollToBottom();
+    } on PostgrestException catch (e) {
+      // Файл уже загружен в Storage, но запись сообщения не создалась —
+      // подчищаем "осиротевший" файл, чтобы не копился мусор в бакете.
+      await _tryDeleteOrphanedAttachment(attachmentPath);
+      _showError('Не удалось отправить: ${e.message}');
+    }
+  }
+
+  Future<void> _tryDeleteOrphanedAttachment(String path) async {
+    try {
+      await Supabase.instance.client.storage.from('chat_attachments').remove([path]);
+    } catch (_) {
+      // тихо игнорируем — не критично, просто останется неиспользуемый файл
+    }
+  }
+
+  void _showError(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// Подписанная ссылка на вложение — Storage bucket приватный, поэтому
+  /// getPublicUrl не работает. Ссылки кэшируются на время жизни экрана
+  /// (см. _signedUrlCache), срок жизни самой ссылки — сутки.
+  Future<String?> _resolveAttachmentUrl(String path) async {
+    final cached = _signedUrlCache[path];
+    if (cached != null) return cached;
+    try {
+      final url = await Supabase.instance.client.storage
+          .from('chat_attachments')
+          .createSignedUrl(path, 60 * 60 * 24);
+      _signedUrlCache[path] = url;
+      return url;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _formatFileSize(int? bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return '$bytes Б';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} КБ';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+  }
 
   String? _presenceSubtitle() {
     if (widget.otherUserId == null) return null;
@@ -359,7 +600,17 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                               ),
                             ),
-                          Text(msg.content, style: const TextStyle(color: AppColors.textPrimary)),
+                          if (msg.hasAttachment)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: _AttachmentBubble(
+                                message: msg,
+                                resolveUrl: _resolveAttachmentUrl,
+                                formatSize: _formatFileSize,
+                              ),
+                            ),
+                          if (msg.content.trim().isNotEmpty)
+                            Text(msg.content, style: const TextStyle(color: AppColors.textPrimary)),
                           const SizedBox(height: 4),
                           Row(
                             mainAxisSize: MainAxisSize.min,
@@ -396,6 +647,16 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.all(10),
               child: Row(
                 children: [
+                  IconButton(
+                    icon: _uploadingAttachment
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.cyan),
+                          )
+                        : const Icon(Icons.attach_file, color: AppColors.cyan),
+                    onPressed: _uploadingAttachment ? null : _pickAttachment,
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _messageController,
@@ -424,6 +685,175 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _AttachmentChoice { photo, file }
+
+/// Вложение внутри пузыря сообщения — картинка с превью (тап открывает
+/// полноэкранный просмотр) или карточка файла с именем/размером и кнопкой
+/// открыть/скачать. Подписанная ссылка запрашивается лениво через
+/// FutureBuilder, чтобы не блокировать рендер списка сообщений.
+class _AttachmentBubble extends StatelessWidget {
+  final Message message;
+  final Future<String?> Function(String path) resolveUrl;
+  final String Function(int? bytes) formatSize;
+
+  const _AttachmentBubble({
+    required this.message,
+    required this.resolveUrl,
+    required this.formatSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final path = message.attachmentPath;
+    if (path == null) return const SizedBox.shrink();
+
+    return FutureBuilder<String?>(
+      future: resolveUrl(path),
+      builder: (context, snapshot) {
+        final url = snapshot.data;
+
+        if (message.isImageAttachment) {
+          return _ImageAttachment(url: url, message: message);
+        }
+        return _FileAttachment(url: url, message: message, formatSize: formatSize);
+      },
+    );
+  }
+}
+
+class _ImageAttachment extends StatelessWidget {
+  final String? url;
+  final Message message;
+  const _ImageAttachment({required this.url, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    // Пока ссылка не готова (или картинка ещё грузится) — плейсхолдер
+    // правильных пропорций, чтобы список сообщений не "прыгал" при загрузке.
+    final aspectRatio = (message.attachmentWidth != null && message.attachmentHeight != null)
+        ? message.attachmentWidth! / message.attachmentHeight!
+        : 1.0;
+
+    if (url == null) {
+      return AspectRatio(
+        aspectRatio: aspectRatio,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.cyan),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => _FullscreenImageScreen(url: url!)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
+          child: Image.network(
+            url!,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => Container(
+              width: 240,
+              height: 240 / aspectRatio,
+              color: AppColors.surfaceAlt,
+              child: const Icon(Icons.broken_image_outlined, color: AppColors.textSecondary),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FileAttachment extends StatelessWidget {
+  final String? url;
+  final Message message;
+  final String Function(int? bytes) formatSize;
+  const _FileAttachment({required this.url, required this.message, required this.formatSize});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: url == null
+          ? null
+          : () => launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 240),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.insert_drive_file_outlined, color: AppColors.cyan, size: 28),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    message.attachmentName ?? 'Файл',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    formatSize(message.attachmentSizeBytes),
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            if (url == null)
+              const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.cyan),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FullscreenImageScreen extends StatelessWidget {
+  final String url;
+  const _FullscreenImageScreen({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(backgroundColor: Colors.black, iconTheme: const IconThemeData(color: Colors.white)),
+      body: Center(
+        child: InteractiveViewer(
+          child: Image.network(url),
         ),
       ),
     );
