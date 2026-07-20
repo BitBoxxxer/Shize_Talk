@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
 import '../services/device_registry.dart';
@@ -107,6 +108,166 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     });
   }
 
+  Future<void> _setPinned(String chatId, bool pinned) async {
+    await Supabase.instance.client
+        .rpc('set_chat_pinned', params: {'p_chat_id': chatId, 'p_pinned': pinned});
+    _loadChats();
+  }
+
+  Future<void> _setIgnored(String chatId, bool ignored) async {
+    await Supabase.instance.client
+        .rpc('set_chat_ignored', params: {'p_chat_id': chatId, 'p_ignored': ignored});
+    _loadChats();
+  }
+
+  Future<void> _setMuted(String chatId, int? minutes) async {
+    await Supabase.instance.client
+        .rpc('set_chat_muted', params: {'p_chat_id': chatId, 'p_minutes': minutes});
+    _loadChats();
+  }
+
+  Future<void> _copyUsername(String username) async {
+    await Clipboard.setData(ClipboardData(text: '@$username'));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Юзернейм скопирован')));
+  }
+
+  Future<void> _toggleBlock(String userId, bool currentlyBlocked) async {
+    if (!currentlyBlocked) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Заблокировать пользователя?'),
+          content: const Text('Он больше не сможет писать вам и отправлять заявки в друзья.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Заблокировать', style: TextStyle(color: AppColors.danger)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    await Supabase.instance.client
+        .rpc(currentlyBlocked ? 'unblock_user' : 'block_user', params: {'p_user_id': userId});
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(currentlyBlocked ? 'Разблокирован' : 'Заблокирован')),
+      );
+    }
+    _loadChats();
+  }
+
+  Future<void> _showMuteOptions(String chatId) async {
+    final choice = await showModalBottomSheet<int?>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Заглушить чат на', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            ListTile(title: const Text('15 минут'), onTap: () => Navigator.pop(context, 15)),
+            ListTile(title: const Text('1 час'), onTap: () => Navigator.pop(context, 60)),
+            ListTile(title: const Text('8 часов'), onTap: () => Navigator.pop(context, 480)),
+            ListTile(title: const Text('Пока не включу заново'), onTap: () => Navigator.pop(context, -1)),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+    await _setMuted(chatId, choice);
+  }
+
+  Future<void> _showChatMenu(Map<String, dynamic> chat, String title) async {
+    final chatId = chat['chat_id'] as String;
+    final isGroup = chat['chat_type'] == 'group';
+    final otherUserId = chat['other_user_id'] as String?;
+    final otherUsername = chat['other_username'] as String?;
+    final isPinned = chat['is_pinned'] as bool? ?? false;
+    final isIgnored = chat['is_ignored'] as bool? ?? false;
+    final mutedUntilRaw = chat['muted_until'] as String?;
+    final isMuted = mutedUntilRaw != null && DateTime.parse(mutedUntilRaw).isAfter(DateTime.now());
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(isPinned ? Icons.push_pin : Icons.push_pin_outlined, color: AppColors.cyan),
+              title: Text(isPinned ? 'Открепить чат' : 'Закрепить чат'),
+              onTap: () => Navigator.pop(context, 'pin'),
+            ),
+            ListTile(
+              leading: Icon(isMuted ? Icons.notifications_off : Icons.notifications_off_outlined,
+                  color: AppColors.cyan),
+              title: Text(isMuted ? 'Изменить заглушение' : 'Заглушить'),
+              onTap: () => Navigator.pop(context, 'mute'),
+            ),
+            if (isMuted)
+              ListTile(
+                leading: const Icon(Icons.notifications_active_outlined, color: AppColors.cyan),
+                title: const Text('Включить уведомления обратно'),
+                onTap: () => Navigator.pop(context, 'unmute'),
+              ),
+            ListTile(
+              leading: Icon(isIgnored ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                  color: AppColors.cyan),
+              title: Text(isIgnored ? 'Не игнорировать' : 'Игнорировать'),
+              onTap: () => Navigator.pop(context, 'ignore'),
+            ),
+            if (!isGroup && otherUsername != null)
+              ListTile(
+                leading: const Icon(Icons.copy, color: AppColors.cyan),
+                title: const Text('Копировать юзернейм'),
+                onTap: () => Navigator.pop(context, 'copy'),
+              ),
+            if (!isGroup && otherUserId != null)
+              ListTile(
+                leading: const Icon(Icons.block, color: AppColors.danger),
+                title: const Text('Заблокировать', style: TextStyle(color: AppColors.danger)),
+                onTap: () => Navigator.pop(context, 'block'),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+
+    switch (action) {
+      case 'pin':
+        await _setPinned(chatId, !isPinned);
+        break;
+      case 'mute':
+        await _showMuteOptions(chatId);
+        break;
+      case 'unmute':
+        await _setMuted(chatId, null);
+        break;
+      case 'ignore':
+        await _setIgnored(chatId, !isIgnored);
+        break;
+      case 'copy':
+        if (otherUsername != null) await _copyUsername(otherUsername);
+        break;
+      case 'block':
+        if (otherUserId != null) await _toggleBlock(otherUserId, false);
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -190,8 +351,15 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                     .difference(DateTime.parse(lastSeenRaw).toLocal())
                                     .inSeconds <
                                 45;
+                        final isPinned = c['is_pinned'] as bool? ?? false;
+                        final isIgnored = c['is_ignored'] as bool? ?? false;
+                        final mutedUntilRaw = c['muted_until'] as String?;
+                        final isMuted =
+                            mutedUntilRaw != null && DateTime.parse(mutedUntilRaw).isAfter(DateTime.now());
 
-                        return Card(
+                        return Opacity(
+                          opacity: isIgnored ? 0.55 : 1,
+                          child: Card(
                           color: AppColors.surface,
                           margin: const EdgeInsets.only(bottom: 10),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -231,13 +399,30 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                   ),
                               ],
                             ),
-                            title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            title: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(title,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                                ),
+                                if (isPinned) ...[
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.push_pin, size: 14, color: AppColors.textSecondary),
+                                ],
+                                if (isMuted) ...[
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.notifications_off, size: 14, color: AppColors.textSecondary),
+                                ],
+                              ],
+                            ),
                             subtitle: Text(
                               preview ?? 'Нет сообщений',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(color: AppColors.textSecondary),
                             ),
+                            onLongPress: () => _showChatMenu(c, title),
                             onTap: () {
                               Navigator.of(context)
                                   .push(
@@ -252,6 +437,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                   )
                                   .then((_) => _loadChats());
                             },
+                          ),
                           ),
                         );
                       }),

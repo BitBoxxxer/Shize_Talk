@@ -6,6 +6,11 @@ import 'screens/welcome_screen.dart';
 import 'screens/chats_list_screen.dart';
 import 'screens/username_setup_screen.dart';
 import 'services/device_registry.dart';
+import 'services/push_notifications.dart';
+
+// Глобальный ключ навигатора — нужен, чтобы открыть чат по тапу на push
+// уведомление, когда неизвестно, какой BuildContext сейчас активен.
+final navigatorKey = GlobalKey<NavigatorState>();
 
 // ЗАМЕНИТЬ на свои значения из Supabase → Project Settings → API
 const supabaseUrl = 'https://zethqqyaddlztgdojiwe.supabase.co';
@@ -26,6 +31,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Shize Talk',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
@@ -60,6 +66,7 @@ class _RootGateState extends State<RootGate> {
     // Регистрируем/обновляем это устройство в списке (экран "Устройства" в
     // настройках) — не блокируем UI, если запрос не удастся, тихо игнорируем.
     unawaited(DeviceRegistry.touch());
+    unawaited(PushNotifications.initialize());
 
     try {
       final profile = await Supabase.instance.client

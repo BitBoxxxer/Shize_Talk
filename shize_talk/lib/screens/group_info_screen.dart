@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
+import '../utils/ru_date.dart';
 import 'public_profile_screen.dart';
 
 /// Экран управления группой: список участников, добавление новых (только из
@@ -187,8 +188,10 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                         ),
                         title: Text('$title${isMe ? ' (вы)' : ''}',
                             style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text('@${p['username']}',
-                            style: const TextStyle(color: AppColors.textSecondary)),
+                        subtitle: Text(
+                          '@${p['username']} · в группе с ${formatRuDate(DateTime.parse(p['joined_at'] as String))}',
+                          style: const TextStyle(color: AppColors.textSecondary),
+                        ),
                         onTap: isMe
                             ? null
                             : () => Navigator.of(context).push(

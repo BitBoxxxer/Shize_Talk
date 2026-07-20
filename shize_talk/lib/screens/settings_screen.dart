@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_version.dart';
 import '../theme/app_theme.dart';
+import '../services/push_notifications.dart';
 import 'edit_profile_screen.dart';
 import 'privacy_screen.dart';
 import 'devices_screen.dart';
 import 'language_screen.dart';
+import 'blocked_users_screen.dart';
 
 /// Экран "Настройки" — как в Телеграме: разделы + аккаунт снизу.
 /// Принимает уже загруженный профиль (username/displayName/bio/birthDate/
@@ -61,6 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirmed == true) {
+      await PushNotifications.unregisterCurrentDevice();
       await Supabase.instance.client.auth.signOut();
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
@@ -124,6 +127,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(
                     builder: (_) => PrivacyScreen(initialAvatarVisibility: widget.avatarVisibility),
                   ),
+                ),
+              ),
+              _SettingsTile(
+                icon: Icons.block,
+                title: 'Заблокированные',
+                subtitle: 'Кого вы заблокировали',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const BlockedUsersScreen()),
                 ),
               ),
               _SettingsTile(

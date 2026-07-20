@@ -19,6 +19,9 @@ dependencies:
   # --- Вложения в чате (фото/файлы) ---
   file_selector: ^1.1.0   # проверь актуальную циферку на pub.dev
   url_launcher: ^6.3.2       # открыть файл-вложение во внешнем приложении/браузере
+  # --- Push-уведомления ---
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.6
 
 dev_dependencies:
   flutter_test:

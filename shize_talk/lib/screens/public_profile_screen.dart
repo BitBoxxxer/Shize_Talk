@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
+import '../utils/ru_date.dart';
 import 'chat_screen.dart';
 
 /// Экран просмотра чужого профиля (открывается из поиска, списка друзей,
@@ -40,6 +42,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   bool _isFriend = false;
   bool _hasPendingRequest = false;
   bool _isMe = false;
+  DateTime? _friendsSince;
+  bool _isBlockedByMe = false;
 
   @override
   void initState() {
@@ -66,6 +70,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         _isFriend = row['is_friend'] as bool? ?? false;
         _hasPendingRequest = row['has_pending_request'] as bool? ?? false;
         _isMe = row['is_me'] as bool? ?? false;
+        final rawSince = row['friends_since'] as String?;
+        _friendsSince = rawSince != null ? DateTime.tryParse(rawSince) : null;
+        _isBlockedByMe = row['is_blocked_by_me'] as bool? ?? false;
       }
     } catch (e) {
       _error = 'Не удалось загрузить профиль: $e';
@@ -119,6 +126,55 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       await Supabase.instance.client.rpc('remove_friend', params: {'p_friend_id': widget.userId});
       if (!mounted) return;
       setState(() => _isFriend = false);
+    } on PostgrestException catch (e) {
+      setState(() => _actionError = e.message);
+    } finally {
+      if (mounted) setState(() => _actionLoading = false);
+    }
+  }
+
+  Future<void> _copyUsername() async {
+    await Clipboard.setData(ClipboardData(text: '@$_username'));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Юзернейм скопирован')),
+    );
+  }
+
+  Future<void> _toggleBlock() async {
+    final willBlock = !_isBlockedByMe;
+    if (willBlock) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Заблокировать пользователя?'),
+          content: Text(
+            '$_displayName не сможет отправлять вам сообщения и заявки в друзья.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Заблокировать', style: TextStyle(color: AppColors.danger)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    setState(() {
+      _actionLoading = true;
+      _actionError = null;
+    });
+    try {
+      await Supabase.instance.client.rpc(
+        willBlock ? 'block_user' : 'unblock_user',
+        params: {'p_user_id': widget.userId},
+      );
+      if (!mounted) return;
+      setState(() => _isBlockedByMe = willBlock);
     } on PostgrestException catch (e) {
       setState(() => _actionError = e.message);
     } finally {
@@ -186,7 +242,26 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                       if (_username.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Center(
-                          child: Text('@$_username', style: const TextStyle(color: AppColors.textSecondary)),
+                          child: GestureDetector(
+                            onTap: _copyUsername,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('@$_username', style: const TextStyle(color: AppColors.textSecondary)),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.copy, size: 14, color: AppColors.textSecondary),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (_isFriend && _friendsSince != null) ...[
+                        const SizedBox(height: 4),
+                        Center(
+                          child: Text(
+                            'Друзья с ${formatRuDate(_friendsSince!)}',
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                          ),
                         ),
                       ],
                       if (_bio.isNotEmpty) ...[
@@ -239,6 +314,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                             icon: const Icon(Icons.person_add_alt),
                             label: const Text('Добавить в друзья'),
                           ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _actionLoading ? null : _toggleBlock,
+                          icon: Icon(
+                            _isBlockedByMe ? Icons.block_flipped : Icons.block,
+                            color: AppColors.danger,
+                          ),
+                          label: Text(
+                            _isBlockedByMe ? 'Разблокировать' : 'Заблокировать',
+                            style: const TextStyle(color: AppColors.danger),
+                          ),
+                          style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.danger)),
+                        ),
                       ],
                     ],
                   ),

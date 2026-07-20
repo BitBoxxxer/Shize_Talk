@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
+import '../utils/ru_date.dart';
 import 'chat_screen.dart';
 import 'public_profile_screen.dart';
 
@@ -289,9 +290,11 @@ class _FriendsScreenState extends State<FriendsScreen> with SingleTickerProvider
         final title = (f['display_name'] as String?)?.isNotEmpty == true
             ? f['display_name'] as String
             : '@${f['username']}';
+        final since = f['friends_since'] as String?;
+        final sinceText = since != null ? ' · с ${formatRuDate(DateTime.parse(since))}' : '';
         return _UserTile(
           title: title,
-          subtitle: '@${f['username']}',
+          subtitle: '@${f['username']}$sinceText',
           avatarUrl: f['avatar_url'] as String?,
           thumbUrl: f['thumb_url'] as String?,
           onTap: () => _openProfile(
