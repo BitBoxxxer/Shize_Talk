@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "106491087091",
+    "project_id": "shizetalkie",
+    "storage_bucket": "shizetalkie.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:106491087091:android:6e86570ff97cd23b9dcf86",
+        "android_client_info": {
+          "package_name": "com.example.shize_talk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDZZEER3TTMSwwaG8LgFXmb5NY2PNI9D7Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
