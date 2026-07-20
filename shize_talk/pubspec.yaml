@@ -1,7 +1,7 @@
 name: shize_talk
 description: "Kasey's Messanger from 26 year"
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 0.3.0beta
+version: 0.3.0
 
 environment:
   sdk: ^3.12.2
@@ -14,10 +14,10 @@ dependencies:
   image_picker: ^1.1.2
   image: ^4.2.0
   video_player: ^2.9.2       # превью видео при выборе участка для гифки
-  video_thumbnail: ^0.5.3    # извлечение кадров видео (замена ffmpeg — см. video_to_gif_screen.dart)
+  flutter_video_thumbnail_plus: ^1.0.6
   shared_preferences: ^2.3.3  # локальный device_id + кэш выбранного языка
   # --- Вложения в чате (фото/файлы) ---
-  file_picker: ^11.0.2       # выбор произвольного файла (любой формат, до 20 МБ)
+  file_selector: ^1.1.0   # проверь актуальную циферку на pub.dev
   url_launcher: ^6.3.2       # открыть файл-вложение во внешнем приложении/браузере
 
 dev_dependencies:

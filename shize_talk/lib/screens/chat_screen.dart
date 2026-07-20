@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -590,17 +590,16 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // ------------------------------------------------------------
+  //  Изменённый метод _sendFile — использует file_selector вместо file_picker
+  // ------------------------------------------------------------
   Future<void> _sendFile() async {
-    final result = await FilePicker.pickFiles(withData: true);
-    if (result == null || result.files.isEmpty) return;
+    // Открываем диалог выбора одного файла с помощью file_selector
+    final XFile? file = await openFile();
+    if (file == null) return; // пользователь отменил выбор
     if (_myUserId == null) return;
 
-    final picked = result.files.first;
-    final bytes = picked.bytes;
-    if (bytes == null) {
-      _showError('Не удалось прочитать файл');
-      return;
-    }
+    final bytes = await file.readAsBytes();
     if (bytes.lengthInBytes > _maxAttachmentBytes) {
       _showError('Файл больше 20 МБ — выберите файл поменьше');
       return;
@@ -609,7 +608,9 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _uploadingAttachment = true);
     try {
       final messageId = _generateAttachmentId();
-      final ext = picked.extension != null ? '.${picked.extension}' : '';
+      final name = file.name;
+      // Определяем расширение из имени файла
+      final ext = name.contains('.') ? name.substring(name.lastIndexOf('.')) : '';
       final path = '${widget.chatId}/$messageId$ext';
 
       await Supabase.instance.client.storage.from('chat_attachments').uploadBinary(
@@ -621,7 +622,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await _insertAttachmentMessage(
         attachmentPath: path,
         attachmentType: 'file',
-        attachmentName: picked.name,
+        attachmentName: name,
         attachmentSizeBytes: bytes.lengthInBytes,
       );
     } on StorageException catch (e) {

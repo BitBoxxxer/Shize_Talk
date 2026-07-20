@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb, compute;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:flutter_video_thumbnail_plus/flutter_video_thumbnail_plus.dart';
 import 'package:image/image.dart' as img;
 import '../theme/app_theme.dart';
 import '../widgets/avatar_cropper.dart';
@@ -124,9 +124,9 @@ class _VideoToGifScreenState extends State<VideoToGifScreen> {
       final frameBytesList = <Uint8List>[];
       for (var i = 0; i < _frameCount; i++) {
         final timeMs = startMs + (stepMs * i).round();
-        final bytes = await VideoThumbnail.thumbnailData(
+        final bytes = await FlutterVideoThumbnailPlus.thumbnailData(
           video: widget.videoFile.path,
-          imageFormat: ImageFormat.JPEG,
+          imageFormat: ImageFormat.jpeg,
           timeMs: timeMs,
           quality: 80,
           maxWidth: 720, // с запасом по разрешению — обрежем/сожмём дальше сами
