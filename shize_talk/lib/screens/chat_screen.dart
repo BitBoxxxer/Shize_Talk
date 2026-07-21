@@ -77,6 +77,9 @@ class ChatScreen extends StatefulWidget {
   final String? otherUserId;
   // Групповой чат — тап по шапке открывает GroupInfoScreen вместо профиля.
   final bool isGroup;
+  // Новые параметры для аватарки группы
+  final String? chatAvatarThumb;
+  final String? chatAvatarFull;
 
   const ChatScreen({
     super.key,
@@ -84,6 +87,8 @@ class ChatScreen extends StatefulWidget {
     required this.chatTitle,
     this.otherUserId,
     this.isGroup = false,
+    this.chatAvatarThumb,
+    this.chatAvatarFull,
   });
 
   @override
@@ -755,6 +760,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final subtitle = _presenceSubtitle();
+    final displayAvatar = widget.chatAvatarThumb ?? widget.chatAvatarFull;
     return Scaffold(
       appBar: AppBar(
         title: InkWell(
@@ -765,6 +771,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       builder: (_) => GroupInfoScreen(
                         chatId: widget.chatId,
                         chatTitle: widget.chatTitle,
+                        chatAvatarThumb: widget.chatAvatarThumb,
+                        chatAvatarFull: widget.chatAvatarFull,
                       ),
                     ),
                   );
@@ -781,20 +789,35 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       );
                     },
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(widget.chatTitle),
-              if (subtitle != null)
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.normal,
-                    color: subtitle == 'в сети' ? AppColors.success : AppColors.textSecondary,
-                  ),
+              if (widget.isGroup)
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: AppColors.purple.withValues(alpha: 0.3),
+                  backgroundImage: displayAvatar != null ? NetworkImage(displayAvatar) : null,
+                  child: displayAvatar == null
+                      ? const Icon(Icons.groups, size: 18, color: AppColors.textSecondary)
+                      : null,
                 ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(widget.chatTitle),
+                  if (subtitle != null)
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.normal,
+                        color: subtitle == 'в сети' ? AppColors.success : AppColors.textSecondary,
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
         ),
