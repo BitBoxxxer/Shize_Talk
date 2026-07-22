@@ -327,7 +327,29 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   @override
   Widget build(BuildContext context) {
     final displayAvatar = _currentAvatarThumb ?? _currentAvatarFull;
-    return Scaffold(
+
+    // Актуальные данные, которые должен получить ChatScreen при закрытии
+    // этого экрана — раньше pop ничего не возвращал, поэтому после смены
+    // названия/аватарки ChatScreen (и, при повторном входе, сам список
+    // чатов до следующего _loadChats()) видел старые значения.
+    Map<String, String?> resultPayload() => {
+          'title': _currentTitle,
+          'avatarThumb': _currentAvatarThumb,
+          'avatarFull': _currentAvatarFull,
+        };
+
+    // canPop: false + ручной pop(result) внутри onPopInvokedWithResult —
+    // единственный способ гарантированно отдать результат независимо от
+    // того, как пользователь закрывает экран (кнопка в AppBar, системный
+    // жест/кнопка "назад"): обычный pop() без результата в этих случаях
+    // ничего не возвращает, а didPop=true откатить нельзя постфактум.
+    return PopScope<Map<String, String?>>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        Navigator.of(context).pop(resultPayload());
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(_currentTitle),
         actions: [
@@ -457,6 +479,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                   ),
                 ],
               ),
+      ),
       ),
     );
   }

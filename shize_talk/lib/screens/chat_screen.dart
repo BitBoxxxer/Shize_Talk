@@ -113,6 +113,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Message? _replyingTo;
   List<Map<String, dynamic>> _pinnedMessages = [];
 
+  // Локальные копии названия/аватарки группы — widget.chatTitle и
+  // widget.chatAvatarThumb/Full неизменяемы (пришли из конструктора при
+  // открытии чата), а GroupInfoScreen может их поменять и вернуть новое
+  // значение при закрытии (см. _openGroupInfo). Без этого шапка чата
+  // продолжала бы показывать то, что было на момент входа в чат.
+  late String _groupTitle = widget.chatTitle;
+  late String? _groupAvatarThumb = widget.chatAvatarThumb;
+  late String? _groupAvatarFull = widget.chatAvatarFull;
+
   @override
   void initState() {
     super.initState();
@@ -760,22 +769,33 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final subtitle = _presenceSubtitle();
-    final displayAvatar = widget.chatAvatarThumb ?? widget.chatAvatarFull;
+    final displayAvatar = _groupAvatarThumb ?? _groupAvatarFull;
     return Scaffold(
       appBar: AppBar(
         title: InkWell(
           onTap: widget.isGroup
-              ? () {
-                  Navigator.of(context).push(
+              ? () async {
+                  final result = await Navigator.of(context).push<Map<String, String?>>(
                     MaterialPageRoute(
                       builder: (_) => GroupInfoScreen(
                         chatId: widget.chatId,
-                        chatTitle: widget.chatTitle,
-                        chatAvatarThumb: widget.chatAvatarThumb,
-                        chatAvatarFull: widget.chatAvatarFull,
+                        chatTitle: _groupTitle,
+                        chatAvatarThumb: _groupAvatarThumb,
+                        chatAvatarFull: _groupAvatarFull,
                       ),
                     ),
                   );
+                  // GroupInfoScreen возвращает актуальные название/аватарку
+                  // при закрытии (кнопкой или системным жестом) — без этого
+                  // шапка чата так и показывала бы старые данные, введённые
+                  // при открытии чата, до следующего полного перезахода.
+                  if (result != null && mounted) {
+                    setState(() {
+                      _groupTitle = result['title'] ?? _groupTitle;
+                      _groupAvatarThumb = result['avatarThumb'];
+                      _groupAvatarFull = result['avatarFull'];
+                    });
+                  }
                 }
               : widget.otherUserId == null
                   ? null
@@ -806,7 +826,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(widget.chatTitle),
+                  Text(widget.isGroup ? _groupTitle : widget.chatTitle),
                   if (subtitle != null)
                     Text(
                       subtitle,

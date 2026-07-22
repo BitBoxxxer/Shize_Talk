@@ -23,8 +23,18 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   // Компактное превью вместо полноразмерной аватарки в списке — если его
   // ещё нет (старая аватарка, залитая до этой фичи), падаем на полный URL.
-  String? _chatAvatarUrl(Map<String, dynamic> chat) =>
-      (chat['other_thumb_url'] as String?) ?? (chat['other_avatar_url'] as String?);
+  //
+  // Для группового чата аватарка своя (chat_thumb_url/chat_avatar_url из
+  // list_chats), а не собеседника — раньше здесь всегда брались только
+  // other_* поля, из-за чего у групп аватарка в списке не показывалась
+  // никогда (только заглушка).
+  String? _chatAvatarUrl(Map<String, dynamic> chat) {
+    final isGroup = chat['chat_type'] == 'group';
+    if (isGroup) {
+      return (chat['chat_thumb_url'] as String?) ?? (chat['chat_avatar_url'] as String?);
+    }
+    return (chat['other_thumb_url'] as String?) ?? (chat['other_avatar_url'] as String?);
+  }
 
   @override
   void initState() {
@@ -432,6 +442,12 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                         chatTitle: title,
                                         otherUserId: c['other_user_id'] as String?,
                                         isGroup: isGroup,
+                                        // Раньше не передавались вовсе — GroupInfoScreen
+                                        // при каждом новом входе получал null и не видел
+                                        // уже сохранённые название/аватарку, пока чат не
+                                        // обновляли повторно в рамках той же сессии.
+                                        chatAvatarThumb: isGroup ? c['chat_thumb_url'] as String? : null,
+                                        chatAvatarFull: isGroup ? c['chat_avatar_url'] as String? : null,
                                       ),
                                     ),
                                   )
