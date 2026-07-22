@@ -113,7 +113,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       // Генерируем превью (thumb) – статичный JPEG из первого кадра
       Uint8List? thumb;
       try {
-        thumb = await generateAvatarThumbnail(croppedBytes!);
+        thumb = await generateAvatarThumbnail(croppedBytes);
       } catch (_) {
         // если не удалось – продолжим без превью
       }

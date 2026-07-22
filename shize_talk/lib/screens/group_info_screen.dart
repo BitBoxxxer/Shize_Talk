@@ -170,7 +170,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
       // Генерируем thumb
       Uint8List? thumbBytes;
       try {
-        thumbBytes = await generateAvatarThumbnail(croppedBytes!);
+        thumbBytes = await generateAvatarThumbnail(croppedBytes);
       } catch (_) {}
 
       // Загружаем в Storage
@@ -182,7 +182,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
 
       await Supabase.instance.client.storage.from('avatars').uploadBinary(
             path,
-            croppedBytes!,
+            croppedBytes,
             fileOptions: FileOptions(contentType: contentType, upsert: true),
           );
       final publicUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(path);

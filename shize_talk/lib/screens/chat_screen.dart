@@ -665,8 +665,8 @@ class _ChatScreenState extends State<ChatScreen> {
             'attachment_type': attachmentType,
             'attachment_name': attachmentName,
             'attachment_size_bytes': attachmentSizeBytes,
-            if (attachmentWidth != null) 'attachment_width': attachmentWidth,
-            if (attachmentHeight != null) 'attachment_height': attachmentHeight,
+            'attachment_width': ?attachmentWidth,
+            'attachment_height': ?attachmentHeight,
             if (_replyingTo != null) 'reply_to_id': _replyingTo!.id,
           })
           .select()
